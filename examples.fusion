@@ -1,0 +1,11 @@
+// Definición de variables y constantes
+int @x = 10;
+const int @y = 20;
+float @z = 5.7;
+string @name = "John Doe";
+bool @is_active = True;
+
+// Funciones
+=> function (int @x) {
+  return * @x @x
+}(2);
