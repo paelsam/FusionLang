@@ -54,16 +54,17 @@
     (number-int ("-" digit (arbno digit)) number)
     (number-float ((arbno digit) "." (arbno digit)) number)
     (number-float ("-" (arbno digit) "." (arbno digit)) number)
-    (f-string ("\"" (or letter digit "_" "$" "&" " " "¿" "?" "!" "." "," ";" ":" "-" "+" "*" "/" "\\" "|" "(" ")" "[" "]" "{" "}" "<" ">" "=" "^" "%") 
-                    (arbno (or letter digit "_" "$" "%" "&" " " "¿" "?" "!" "." "," ";" ":" "-" "+" "*" "/" "\\" "|" "(" ")" "[" "]" "{" "}" "<" ">" "=" "^" "%")) "\"") string)
-    (f-string ("'" (or letter digit "_" "$" "&" " " "¿" "?" "!" "." "," ";" ":" "-" "+" "*" "/" "\\" "|" "(" ")" "[" "]" "{" "}" "<" ">" "=" "^" "%") 
-                   (arbno (or letter digit "_" "$" "%" "&" " " "¿" "?" "!" "." "," ";" ":" "-" "+" "*" "/" "\\" "|" "(" ")" "[" "]" "{" "}" "<" ">" "=" "^" "%")) "'") string)
+    (fusion-string ("\"" (or letter digit "_" "$" "&" " " "¿" "?" "!" "." "," ";" ":" "-" "+" "*" "/" "\\" "|" "(" ")" "[" "]" "{" "}" "<" ">" "=" "^" "%") 
+                         (arbno (or letter digit "_" "$" "%" "&" " " "¿" "?" "!" "." "," ";" ":" "-" "+" "*" "/" "\\" "|" "(" ")" "[" "]" "{" "}" "<" ">" "=" "^" "%")) "\"") string)
+    (fusion-string ("'" (or letter digit "_" "$" "&" " " "¿" "?" "!" "." "," ";" ":" "-" "+" "*" "/" "\\" "|" "(" ")" "[" "]" "{" "}" "<" ">" "=" "^" "%") 
+                        (arbno (or letter digit "_" "$" "%" "&" " " "¿" "?" "!" "." "," ";" ":" "-" "+" "*" "/" "\\" "|" "(" ")" "[" "]" "{" "}" "<" ">" "=" "^" "%")) "'") string)
     ))
 
 ; Especificación sintáctica (gramática)
 (define grammar-fusionlang-interpreter
-  '(
-    (program (block-global block-program)                             fusion-program)
+  '(  
+    (program (expression)                                             fusion-program)
+    ; (program (block-global block-program)                             fusion-program)
     (block-global
      ("GLOBALS" "{" (arbno expression) "}")                           fusion-block-global)
     (block-program
@@ -79,7 +80,7 @@
 
 
 
-    (expression (f-string)                                            lit-string-exp)
+    (expression (fusion-string)                                       lit-string-exp)
     (expression (number-int)                                          lit-int-exp)
     (expression (number-float)                                        lit-float-exp)
     (expression ("True")                                              lit-bool-true-exp)
@@ -114,8 +115,8 @@
     (unary-prim ("!")                                                 unary-neg-exp)
 
     ; Operador de asignación
-    (expression ( assign-op identifier expression )                   fusion-assign-exp)
-    (assign-op ("->")                                                 assign-op-exp)
+    (expression ( "->" identifier expression )                        fusion-assign-exp)
+
 
     ;? Definición de tipos de datos
     (type-exp ("int")                                                 type-int-exp)
@@ -162,7 +163,7 @@
     (unary-prim ("@length")                                           string-length-exp)
 
     ; Secuenciación
-    (expression ("BLOCK" "{" (arbno expression) "}")                  block-sequence-exp)
+    (expression ("BLOCK" "{" expression (arbno expression) "}")                  block-sequence-exp)
     (expression
      ("LOCALS" "{" (arbno type-exp identifier "=" expression ";") "}"
                "{" (arbno expression) "}")                            locals-exp)
@@ -184,15 +185,271 @@
 
 
     ; Primitivas del lenguaje
-    ( expression 
+    ( expression
       ("print" "(" (separated-list expression ",") ")" ";")           print-exp)
 
 
     ))
 
+; eval-program: Evalúa un programa FusionLang
+; Cambiar el llamado de los ambientes de evaluación
+(define eval-program
+  (lambda (f-program env)
+    (cases program f-program
+      (fusion-program (expression)
+                      (eval-expression expression (empty-env))))))
+; (define eval-program
+;   (lambda (f-program env)
+;     (cases program f-program
+;       (fusion-program (block-global block-program)
+;                       (eval-block-global block-global env)
+;                       (eval-block-program block-program env)))))
+
+; eval-block-global: Evalúa un bloque de variables globales
+; Evalua todas las expresiones de un bloque global para luego guardarlas en
+; ambiente global (ambiente anterior al almbiente vacío)
+
+(define eval-block-global
+  (lambda (f-block-global env)
+    (cases block-global f-block-global
+      (fusion-block-global (expressions)
+                           ;! Debe guardar las variables en el ambiente global
+                           (eval-expression expressions env)))))
+
+; eval-block-program: Evalúa un bloque de programa
+; Evalua todas la expresiones de un bloque de programa para luego
+; evaluar la última expresión que será la función principal (main)
+
+(define eval-block-program
+  (lambda (f-block-program env)
+    (cases block-program f-block-program
+      (fusion-block-program (expressions)
+                            ;! Debe guardar las variables en el ambiente global
+                            (eval-expression expressions env)))))
+
+; eval-expression: Evalúa una expresión
+; Evalua una expresión de FusionLang y retorna el valor resultante
+; parámetros: f-expression (expresión de FusionLang); env (ambiente de evaluación)
+
+(define eval-expression
+  (lambda (exp env)
+    (cases expression exp
+      (fusion-identifier-exp (id) id)
+      (fusion-assign-exp (id exp)
+                         (begin
+                           (set-ref!
+                            (apply-env-ref env id)
+                            (eval-expression exp env))
+                           (lit-bool-true-exp)))
+      (lit-string-exp (str) (decode-string str))
+      (lit-int-exp (int) int)
+      (lit-float-exp (float) float)
+      (lit-bool-true-exp () 'True) 
+      (lit-bool-false-exp () 'False) 
+      (lit-proc-exp (types ids body) (closure ids body env))
+      (lit-list-exp (expressions) (eval-operators expressions env)) 
+      (lit-vector-exp (expressions) (list->vector (eval-operators expressions env)))
+      (lit-dict-exp (keys values) (create-dictionary keys values)) ;! Problema con las expresiones
+      (list-empty-exp () empty)
+
+      (binary-exp (binary-op exp1 exp2)
+          (eval-binary-prim binary-op (eval-operators (list exp1 exp2) env)))
+      
+      (unary-exp (unary-op exp)
+        (eval-unary-prim unary-op (eval-expression exp env)))
+
+
+      (else (eopl:error "Expresión no válida"))
+      )))
+
+(define eval-binary-prim
+  (lambda (prim values)
+    (cases binary-prim prim
+      (binary-add-exp () (
+        (cond 
+          ((and (string? (car values)) (string? (cadr values))) (string-append (car values) (cadr values)))
+          ((and (number? (car values)) (number? (cadr values))) (+ (car values) (cadr values))))
+      ))
+      (binary-sub-exp () (- (car values) (cadr values)))
+      (binary-mul-exp () (* (car values) (cadr values)))
+      (binary-div-exp () (/ (car values) (cadr values)))
+      (binary-eq-exp () (equal? (car values) (cadr values)))
+      (binary-neq-exp () (not (equal? (car values) (cadr values))))
+      (binary-lt-exp () (< (car values) (cadr values)))
+      (binary-lte-exp () (<= (car values) (cadr values)))
+      (binary-gt-exp () (> (car values) (cadr values)))
+      (binary-gte-exp () (>= (car values) (cadr values)))
+
+
+      (else 'b))
+  ))
+
+(define eval-unary-prim
+  (lambda (prim value)
+    (cases unary-prim prim
+      (unary-neg-exp () (convert-bool-value (not (convert-bool-value value))))
+      (else 'a))
+  ))
 
 
 
+;*********************************************************************************
+; Diccionarios
+(define-datatype dictionary dictionary?
+  (dict (key expression?)
+        (value expression?)))
+
+; create-dictionary: Crea una lista de datatypes de dictionary
+(define create-dictionary
+  (lambda (keys values)
+    (if (and (null? keys) (null? values))  
+      '()
+      (cons (dict (car keys) (car values)) (create-dictionary (cdr keys) (cdr values))))))
+
+
+;*********************************************************************************
+; Creación de store (almacén de variables)
+
+(define-datatype reference reference?
+  (a-ref (position integer?)
+         (vec vector?)))
+
+(define set-ref!
+  (lambda (ref val)
+    (cases reference ref
+      (a-ref (pos vec)
+             (vector-set! vec pos val)))))
+
+(define deref
+  (lambda (ref)
+    (cases reference ref
+      (a-ref (pos vec)
+             (vector-ref vec pos)))))
+
+;****************************************************************************************
+;Funciones Auxiliares
+
+; funciones auxiliares para encontrar la posición de un símbolo
+; en la lista de símbolos de un ambiente
+
+(define rib-find-position
+  (lambda (sym los)
+    (list-find-position sym los)))
+
+(define list-find-position
+  (lambda (sym los)
+    (list-index (lambda (sym1) (eqv? sym1 sym)) los)))
+
+(define list-index
+  (lambda (pred ls)
+    (cond
+      ((null? ls) #f)
+      ((pred (car ls)) 0)
+      (else (let ((list-index-r (list-index pred (cdr ls))))
+              (if (number? list-index-r)
+                  (+ list-index-r 1)
+                  #f))))))
+
+; iota: Genera una lista de enteros desde 0 hasta end
+(define iota
+  (lambda (end)
+    (let loop ((next 0))
+      (if (>= next end) '()
+          (cons next (loop (+ next 1)))))))
+
+; decode-string: Quita las comillas de una cadena
+(define decode-string
+  (lambda (str)
+    (substring str 1 (- (string-length str) 1))))
+
+; eval-opetators: Evalúa una lista de expresiones
+(define eval-operators
+  (lambda (ops env)
+    (map (lambda (op)
+           (eval-expression op env))
+         ops)))
+
+;*********************************************************************************
+;* Construyendo ambiente
+
+(define-datatype environment environment?
+  (empty-env-record)
+  (extended-env-record
+   (identifiers (list-of symbol?))
+   (vec vector?)
+   (env environment?)))
+
+(define empty-env
+  (lambda ()
+    (empty-env-record)))
+
+(define extend-env
+  (lambda (ids vals env)
+    (extended-env-record ids (list->vector vals) env)))
+
+(define extend-env-recursively
+  (lambda (proc-names identifiers bodies old-env)
+    (let
+        ((len (length proc-names)))
+      (let
+          ((vec (make-vector len)))
+        (let
+            ((env (extended-env-record proc-names vec old-env)))
+          (for-each
+           (lambda (pos ids body)
+             (vector-set! vec pos (closure ids body env)))
+           (iota len) identifiers bodies)
+          env)))))
+
+(define apply-env
+  (lambda (env id)
+    (deref (apply-env-ref env id))))
+
+(define apply-env-ref
+  (lambda (env id)
+    (cases environment env
+      (empty-env-record ()
+                        (eopl:error "Variable ~s is not defined" (symbol->string id) ))
+      (extended-env-record (identifiers values env)
+                           (let ((pos (rib-find-position id identifiers)))
+                             (if (number? pos)
+                                 (a-ref pos values)
+                                 (apply-env-ref env id)))))))
+
+
+;*********************************************************************************
+;* Procedimientos
+
+(define-datatype procval procval?
+  (closure
+   (ids (list-of symbol?))
+   (body expression?)
+   (env environment?)))
+
+(define apply-procedure
+  (lambda (proc args)
+    (cases procval proc
+      (closure (ids body env)
+               (eval-expression body (extend-env ids args env))))))
+
+
+;*********************************************************************************
+;* Booleanos
+
+(define true-value?
+  (lambda (x) (not (zero? x))))
+
+(define scheme-value? (lambda (v) #t))
+
+;! Dividir esta función en dos
+(define convert-bool-value 
+  (lambda (v)
+    (cond 
+      [(equal? v #t) 'True]
+      [(equal? v #f) 'False]
+      [(equal? v 'True) #t]
+      [(equal? v 'False) #f]
+      [else (eopl:error "¿What value is this?")])))
 
 
 
@@ -212,7 +469,7 @@
 
 (define interpreter
   (sllgen:make-rep-loop "Ƒ> "
-                        (lambda (program) "💩")
+                        (lambda (program) (eval-program program empty-env))
                         (sllgen:make-stream-parser
                          scanner-spec-fusionlang-interpreter
                          grammar-fusionlang-interpreter)))
