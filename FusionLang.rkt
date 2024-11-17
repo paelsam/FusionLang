@@ -62,13 +62,14 @@
 
 ; Especificación sintáctica (gramática)
 (define grammar-fusionlang-interpreter
-  '(  
-    (program (expression)                                             fusion-program)
-    ; (program (block-global block-program)                             fusion-program)
+  '(
+    ; (program (expression)                                             fusion-program)
+    (program (block-global block-program)                             fusion-program)
     (block-global
      ("GLOBALS" "{" (arbno expression) "}")                           fusion-block-global)
     (block-program
-     ("PROGRAM" "{" (arbno expression) "}")                           fusion-block-program)
+     ("PROGRAM" "{" "proc" "@main" "=" "function" "(" ")"
+                "{" "return" expression "}" "}")              fusion-block-program)
 
     (expression (identifier)                                          fusion-identifier-exp)
     (expression
@@ -76,7 +77,7 @@
     (expression
      ("const" type-exp identifier "=" expression ";")                 fusion-const-exp)
     (expression
-     ("=>" expression "(" (separated-list expression ",") ")" ";")    fusion-app-exp)
+     ("=>" expression "(" (separated-list expression ",") ")")    fusion-app-exp)
 
 
 
@@ -139,13 +140,12 @@
     (binary-prim ("@append")                                          list-append-exp)
 
     ; Primitivas internas de los vectores
-    ;! Pregunta: Cómo se invocan a las primitivas de los vectores si los parámetros se pasan por valor?
 
     (unary-prim ("@vector?")                                          vector-bool-exp)
     (unary-prim ("@make-vector")                                      vector-make-exp)
     (binary-prim ("@ref-vector")                                      vector-ref-exp) ;? Esto recibe 2 argumentos (vector, index)
     (binary-prim ("@set-vector" "[" number-int "]")                   vector-set-exp) ;? Esto recibe 2 argumentos (vector, value)
-    (unary-prim ("@append-vector")                                    vector-append-exp)
+    (binary-prim ("@append-vector")                                   vector-append-exp)
     (unary-prim ("@delete-val-vector" "[" number-int "]")             vector-delete-exp)
 
     ; Primitivas internas de los diccionarios
@@ -186,24 +186,28 @@
 
     ; Primitivas del lenguaje
     ( expression
-      ("print" "(" (separated-list expression ",") ")" ";")           print-exp)
+      ("print" "(" (separated-list expression ",") ")")           print-exp)
 
 
     ))
 
 ; eval-program: Evalúa un programa FusionLang
 ; Cambiar el llamado de los ambientes de evaluación
-(define eval-program
-  (lambda (f-program env)
-    (cases program f-program
-      (fusion-program (expression)
-                      (eval-expression expression (empty-env))))))
 ; (define eval-program
 ;   (lambda (f-program env)
 ;     (cases program f-program
-;       (fusion-program (block-global block-program)
-;                       (eval-block-global block-global env)
-;                       (eval-block-program block-program env)))))
+;       (fusion-program (expression)
+;                       (eval-expression expression (empty-env))))))
+
+(define eval-program
+  (lambda (f-program env)
+    (cases program f-program
+      (fusion-program (block-global block-program)
+                      ;? Primero se evalúan las variables globales
+                      ;? y luego se evalúa la función principal
+                      (eval-block-program block-program (eval-block-global block-global env))
+                      ))))
+
 
 ; eval-block-global: Evalúa un bloque de variables globales
 ; Evalua todas las expresiones de un bloque global para luego guardarlas en
@@ -213,8 +217,13 @@
   (lambda (f-block-global env)
     (cases block-global f-block-global
       (fusion-block-global (expressions)
-                           ;! Debe guardar las variables en el ambiente global
-                           (eval-expression expressions env)))))
+                           (let ((ids-and-exps (get-ids-and-exps expressions env)))
+                             (let ((var-ids (car (car ids-and-exps)))
+                                   (var-exps (cadr (car ids-and-exps)))
+                                   (const-ids (car (cadr ids-and-exps)))
+                                   (const-exps (cadr (cadr ids-and-exps))))
+                               (extend-env-const const-ids (list->vector const-exps)
+                                                 (extend-env var-ids var-exps env))))))))
 
 ; eval-block-program: Evalúa un bloque de programa
 ; Evalua todas la expresiones de un bloque de programa para luego
@@ -222,10 +231,8 @@
 
 (define eval-block-program
   (lambda (f-block-program env)
-    (cases block-program f-block-program
-      (fusion-block-program (expressions)
-                            ;! Debe guardar las variables en el ambiente global
-                            (eval-expression expressions env)))))
+    (cases block-program f-block-program   
+      (fusion-block-program (expression) (eval-expression expression env)))))
 
 ; eval-expression: Evalúa una expresión
 ; Evalua una expresión de FusionLang y retorna el valor resultante
@@ -235,29 +242,67 @@
   (lambda (exp env)
     (cases expression exp
       (fusion-identifier-exp (id) id)
+      (fusion-var-exp (type-exp id rhs-exp) 'a)
       (fusion-assign-exp (id exp)
                          (begin
                            (set-ref!
                             (apply-env-ref env id)
                             (eval-expression exp env))
-                           (lit-bool-true-exp)))
+                           (convert-bool-value #t)))
+      ;! Arreglar problema con app-exp
+      (fusion-app-exp (exp args)
+          (let ((proc (deref (apply-env-ref env (eval-expression exp env))))
+                (args (eval-operators args env)))
+                (if (procval? proc)
+                    (apply-procedure proc args)
+                    (eopl:error "Attempt to apply non-procedure ~s" proc))))
       (lit-string-exp (str) (decode-string str))
       (lit-int-exp (int) int)
       (lit-float-exp (float) float)
-      (lit-bool-true-exp () 'True) 
-      (lit-bool-false-exp () 'False) 
+      (lit-bool-true-exp () 'True)
+      (lit-bool-false-exp () 'False)
       (lit-proc-exp (types ids body) (closure ids body env))
-      (lit-list-exp (expressions) (eval-operators expressions env)) 
+      (lit-list-exp (expressions) (eval-operators expressions env))
       (lit-vector-exp (expressions) (list->vector (eval-operators expressions env)))
       (lit-dict-exp (keys values) (create-dictionary keys values)) ;! Problema con las expresiones
       (list-empty-exp () empty)
 
-      (binary-exp (binary-op exp1 exp2)
-          (eval-binary-prim binary-op (eval-operators (list exp1 exp2) env)))
+      (if-exp (test-exp true-exp false-exp)
+              (if (convert-bool-value (eval-expression test-exp env))
+                  (eval-expression true-exp env)
+                  (eval-expression false-exp env)))
       
-      (unary-exp (unary-op exp)
-        (eval-unary-prim unary-op (eval-expression exp env)))
+      (switch-exp (cond-exp cases-exp bodies-exp default-exp)
+                              (let*
+                                  (
+                                   (condition (eval-expression cond-exp env))
+                                   (cases (eval-operators cases-exp env))
+                                   (true-case (list-find-position condition cases))
+                                   )
+                                (if (number? true-case)
+                                    (eval-expression (list-ref bodies-exp true-case) env)
+                                    (eval-expression default-exp env)
+                                    )) )
 
+      (binary-exp (binary-op exp1 exp2)
+                  (let ((args (eval-operators (list exp1 exp2) env)))
+                    (eval-binary-prim binary-op args)))
+
+      (unary-exp (unary-op exp)
+                 (eval-unary-prim unary-op (eval-expression exp env)))
+
+
+      (print-exp (expressions)
+                 (begin
+                   ;? En caso de que en la lista de expresiones haya un identificador
+                   ;? Aplicar el apply-env para obtener el valor de la variable
+                   (for-each (lambda (exp)
+                               (cases expression exp
+                                 (fusion-identifier-exp (id) (display (deref (apply-env-ref env id))))
+                                 (else (display (eval-expression exp env))))) expressions)
+                   (newline)
+                   #t
+                   ))
 
       (else (eopl:error "Expresión no válida"))
       )))
@@ -265,11 +310,10 @@
 (define eval-binary-prim
   (lambda (prim values)
     (cases binary-prim prim
-      (binary-add-exp () (
-        (cond 
-          ((and (string? (car values)) (string? (cadr values))) (string-append (car values) (cadr values)))
-          ((and (number? (car values)) (number? (cadr values))) (+ (car values) (cadr values))))
-      ))
+      (binary-add-exp () (cond
+                           ((and (string? (car values)) (string? (cadr values))) (string-append (car values) (cadr values)))
+                           ((and (number? (car values)) (number? (cadr values))) (+ (car values) (cadr values)))
+                           (else (eopl:error "Error to process ~s" values))))
       (binary-sub-exp () (- (car values) (cadr values)))
       (binary-mul-exp () (* (car values) (cadr values)))
       (binary-div-exp () (/ (car values) (cadr values)))
@@ -280,32 +324,135 @@
       (binary-gt-exp () (> (car values) (cadr values)))
       (binary-gte-exp () (>= (car values) (cadr values)))
 
+      (vector-set-exp (pos) (set-vector (car values) pos (cadr values)))
+      (vector-ref-exp () (vector-ref (car values) (cadr values)))
+      (vector-append-exp () (cons (vector->list (car values)) (cadr values))) ;! ARREGLAR ESTO
+
+      (dict-ref-exp () (ref-dict (car values) (cadr values)))
+      
+
+
 
       (else 'b))
-  ))
+    ))
 
 (define eval-unary-prim
   (lambda (prim value)
     (cases unary-prim prim
       (unary-neg-exp () (convert-bool-value (not (convert-bool-value value))))
-      (else 'a))
-  ))
-
+      (string-length-exp () (string-length value))
+      (dict-bool-exp () (eval-dict? value))
+      (dict-make-exp () (if (is-a-dict? value) value (eopl:error "This is not a dict ~s" value ))) 
+      (dict-keys-exp () (get-keys value))
+      (dict-values-exp () (get-values value))
+      (vector-make-exp () (if (vector? value) value (eopl:error "This is not a vector ~s" value )))
+      (vector-bool-exp () (convert-bool-value (vector? value)))
+      (vector-delete-exp (pos) (vector-delete value pos))
+      (list-empty-bool-exp () (convert-bool-value (null? value)))
+      (list-head-exp () (car value))
+      (list-tail-exp () (cdr value))
+      (list-cons-exp () (if (list? value) value (eopl:error "This is not a list ~s" value ))) 
+      (else (eopl:error "Error to process ~s" value)))
+    ))
 
 
 ;*********************************************************************************
 ; Diccionarios
+
+(define-datatype entry entry?
+  (make-entry (key expression?)
+              (value expression?)))
+
 (define-datatype dictionary dictionary?
-  (dict (key expression?)
-        (value expression?)))
+  (make-dict (dict-entries (list-of entry?))))
+
+(define is-a-dict? 
+  (lambda (value) (if (dictionary? value) #t #f)))
 
 ; create-dictionary: Crea una lista de datatypes de dictionary
 (define create-dictionary
   (lambda (keys values)
-    (if (and (null? keys) (null? values))  
-      '()
-      (cons (dict (car keys) (car values)) (create-dictionary (cdr keys) (cdr values))))))
+    (make-dict (map (lambda (key value) (make-entry key value)) keys values))))
 
+(define eval-dict?
+  (lambda (val)
+    (if (dictionary? val) (convert-bool-value #t) (convert-bool-value #f))))
+
+(define get-keys
+  (lambda (dict)
+    (cases dictionary dict
+      (make-dict (entries)
+                 (map (lambda (entry) (get-key entry)) entries)
+                 ))))
+
+(define get-key
+  (lambda (entrie)
+    (cases entry entrie
+      (make-entry (key value)
+                  key ;? Debería evaluar las expresiones?
+                  ))))
+
+(define get-values
+  (lambda (dict)
+    (cases dictionary dict
+      (make-dict (entries)
+                 (map (lambda (entry) (get-value entry)) entries)
+                 ))))
+
+(define get-value
+  (lambda (entrie)
+    (cases entry entrie
+      (make-entry (key value)
+                  value ;? Debería evaluar las expresiones?
+                  ))))
+
+(define filter-entries
+  (lambda (key entries)
+    (if (null? entries) '()
+        (let ((entry (car entries)))
+          (if (eqv? key (get-key entry))
+              (cons entry (filter-entries key (cdr entries)))
+              (filter-entries key (cdr entries)))))))
+
+(define ref-dict
+  (lambda (dict key)
+    (cases dictionary dict
+      (make-dict (entries)
+                 (let ((entry (filter-entries key entries)))
+                   (if (null? entry)
+                       (get-value entry)
+                       (eopl:error "Key ~s not found" key)))))))
+
+
+;*********************************************************************************
+; Vectores
+
+; vector-delete
+; elimina el elemento de la posición pos y desplaza una posición
+; a la izquierda todos los elementos a la derecha
+; de la posición pos.
+; La posición inicial es la posición 0
+
+;! No está eliminando los elementos correctamente
+(define vector-delete
+  (lambda (vec pos)
+    (let ((len (vector-length vec)))
+      (let ((new-vec (make-vector (- len 1))))
+        (let loop ((i 0))
+          (if (>= i len) new-vec
+              (begin
+                (if (< i pos)
+                    (vector-set! new-vec i (vector-ref vec i))
+                    (vector-set! new-vec (- i 1) (vector-ref vec i)))
+                (loop (+ i 1)))))))))
+
+; set-vector
+; Cambia el valor de la posición pos del vector vec por el valor val.
+
+(define set-vector
+  (lambda (vec pos val)
+    (vector-set! vec pos val)
+    vec))
 
 ;*********************************************************************************
 ; Creación de store (almacén de variables)
@@ -366,8 +513,24 @@
 (define eval-operators
   (lambda (ops env)
     (map (lambda (op)
-           (eval-expression op env))
-         ops)))
+          (cases expression op
+           (fusion-identifier-exp (id) (apply-env env id))
+           (else (eval-expression op env)))) ops)))
+
+; get-ids-and-exp: Obtiene una lista con los identificadores y valores de las variables y constantes
+; ((ids-vars, vals-vars) (ids-const, vals-consts))
+(define get-ids-and-exps
+  (lambda (expressions env)
+    (let loop ((exps expressions) (var-ids '()) (var-exps '()) (const-ids '()) (const-exps '()))
+      (if (null? exps)
+          (list (list var-ids var-exps) (list const-ids const-exps))
+          (let ((exp (car exps)))
+            (cases expression exp
+              (fusion-var-exp (type-exp id assigned-exp)
+                              (loop (cdr exps) (cons id var-ids) (cons (eval-expression assigned-exp env) var-exps) const-ids const-exps))
+              (fusion-const-exp (type-exp id assigned-exp)
+                                (loop (cdr exps) var-ids var-exps (cons id const-ids) (cons (eval-expression assigned-exp env) const-exps)))
+              (else (loop (cdr exps) var-ids var-exps const-ids const-exps))))))))
 
 ;*********************************************************************************
 ;* Construyendo ambiente
@@ -377,6 +540,8 @@
   (extended-env-record
    (identifiers (list-of symbol?))
    (vec vector?)
+   (const-identifiers (list-of symbol?))
+   (const-vals vector?)
    (env environment?)))
 
 (define empty-env
@@ -385,7 +550,11 @@
 
 (define extend-env
   (lambda (ids vals env)
-    (extended-env-record ids (list->vector vals) env)))
+    (extended-env-record ids (list->vector vals) '() (make-vector 0)  env)))
+
+(define extend-env-const
+  (lambda (ids vals env)
+    (extended-env-record '() (make-vector 0) ids vals env)))
 
 (define extend-env-recursively
   (lambda (proc-names identifiers bodies old-env)
@@ -394,7 +563,7 @@
       (let
           ((vec (make-vector len)))
         (let
-            ((env (extended-env-record proc-names vec old-env)))
+            ((env (extended-env-record proc-names vec '() (make-vector 0) old-env)))
           (for-each
            (lambda (pos ids body)
              (vector-set! vec pos (closure ids body env)))
@@ -409,13 +578,15 @@
   (lambda (env id)
     (cases environment env
       (empty-env-record ()
-                        (eopl:error "Variable ~s is not defined" (symbol->string id) ))
-      (extended-env-record (identifiers values env)
+                        (eopl:error "Variable ~s is not defined" id))
+      (extended-env-record (identifiers values const-identifiers const-values env)
                            (let ((pos (rib-find-position id identifiers)))
                              (if (number? pos)
                                  (a-ref pos values)
-                                 (apply-env-ref env id)))))))
-
+                                 (let ((const-pos (rib-find-position id const-identifiers)))
+                                   (if (number? const-pos)
+                                       (a-ref const-pos const-values)
+                                       (apply-env-ref env id)))))))))
 
 ;*********************************************************************************
 ;* Procedimientos
@@ -442,9 +613,9 @@
 (define scheme-value? (lambda (v) #t))
 
 ;! Dividir esta función en dos
-(define convert-bool-value 
+(define convert-bool-value
   (lambda (v)
-    (cond 
+    (cond
       [(equal? v #t) 'True]
       [(equal? v #f) 'False]
       [(equal? v 'True) #t]
@@ -469,7 +640,7 @@
 
 (define interpreter
   (sllgen:make-rep-loop "Ƒ> "
-                        (lambda (program) (eval-program program empty-env))
+                        (lambda (program) (eval-program program (empty-env)))
                         (sllgen:make-stream-parser
                          scanner-spec-fusionlang-interpreter
                          grammar-fusionlang-interpreter)))
