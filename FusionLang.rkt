@@ -49,7 +49,7 @@
   '(
     (white-space (whitespace) skip)
     (comment ("%" (arbno (not #\newline))) skip)
-    (identifier ("@" (or letter "_" "$" "/" "&" "?") (arbno (or letter digit "_" "$" "%" "&" "?"))) symbol)
+    (identifier ((or letter "_" "$" "/" "&" "?") (arbno (or letter digit "_" "$" "%" "&" "?"))) symbol)
     (number-int (digit (arbno digit)) number)
     (number-int ("-" digit (arbno digit)) number)
     (number-float ((arbno digit) "." (arbno digit)) number)
@@ -59,25 +59,24 @@
     (fusion-string ("'" (or letter digit "_" "$" "&" " " "¿" "?" "!" "." "," ";" ":" "-" "+" "*" "/" "\\" "|" "(" ")" "[" "]" "{" "}" "<" ">" "=" "^" "%") 
                         (arbno (or letter digit "_" "$" "%" "&" " " "¿" "?" "!" "." "," ";" ":" "-" "+" "*" "/" "\\" "|" "(" ")" "[" "]" "{" "}" "<" ">" "=" "^" "%")) "'") string)
     ))
-
+  
 ; Especificación sintáctica (gramática)
 (define grammar-fusionlang-interpreter
   '(
-    ; (program (expression)                                             fusion-program)
     (program (block-global block-program)                             fusion-program)
     (block-global
-     ("GLOBALS" "{" (arbno expression) "}")                           fusion-block-global)
+     ("GLOBALS" "{" (arbno expression ";") "}")                           fusion-block-global)
     (block-program
      ("PROGRAM" "{" "proc" "@main" "=" "function" "(" ")"
-                "{" "return" expression "}" "}")              fusion-block-program)
+                "{" "return" expression "}" "}")                      fusion-block-program)
 
     (expression (identifier)                                          fusion-identifier-exp)
     (expression
-     (type-exp identifier "=" expression ";")                         fusion-var-exp)
+     (type-exp identifier "=" expression)                         fusion-var-exp)
     (expression
-     ("const" type-exp identifier "=" expression ";")                 fusion-const-exp)
+     ("const" type-exp identifier "=" expression)                 fusion-const-exp)
     (expression
-     ("=>" expression "(" (separated-list expression ",") ")")    fusion-app-exp)
+     ("=>" expression "(" (separated-list expression ",") ")")        fusion-app-exp)
 
 
 
@@ -144,7 +143,7 @@
     (unary-prim ("@vector?")                                          vector-bool-exp)
     (unary-prim ("@make-vector")                                      vector-make-exp)
     (binary-prim ("@ref-vector")                                      vector-ref-exp) ;? Esto recibe 2 argumentos (vector, index)
-    (binary-prim ("@set-vector" "[" number-int "]")                   vector-set-exp) ;? Esto recibe 2 argumentos (vector, value)
+    (binary-prim ("@vector-set" "[" number-int "]")                   vector-set-exp) ;? Esto recibe 2 argumentos (vector, value)
     (binary-prim ("@append-vector")                                   vector-append-exp)
     (unary-prim ("@delete-val-vector" "[" number-int "]")             vector-delete-exp)
 
@@ -163,10 +162,10 @@
     (unary-prim ("@length")                                           string-length-exp)
 
     ; Secuenciación
-    (expression ("BLOCK" "{" expression (arbno expression) "}")                  block-sequence-exp)
+    (expression ("BLOCK" "{" expression (arbno ";" expression ";") "}")       block-exp)
     (expression
-     ("LOCALS" "{" (arbno type-exp identifier "=" expression ";") "}"
-               "{" (arbno expression) "}")                            locals-exp)
+     ("LOCALS" "{" (arbno expression ";") "}"
+               "{" (arbno expression ";") "}")                            locals-exp)
 
     ; Ciclos y condicionales
     (expression
@@ -183,7 +182,6 @@
                "default" ":" "{" expression "}"
                "}")                                                   switch-exp)
 
-
     ; Primitivas del lenguaje
     ( expression
       ("print" "(" (separated-list expression ",") ")")           print-exp)
@@ -192,12 +190,6 @@
     ))
 
 ; eval-program: Evalúa un programa FusionLang
-; Cambiar el llamado de los ambientes de evaluación
-; (define eval-program
-;   (lambda (f-program env)
-;     (cases program f-program
-;       (fusion-program (expression)
-;                       (eval-expression expression (empty-env))))))
 
 (define eval-program
   (lambda (f-program env)
@@ -217,13 +209,12 @@
   (lambda (f-block-global env)
     (cases block-global f-block-global
       (fusion-block-global (expressions)
-                           (let ((ids-and-exps (get-ids-and-exps expressions env)))
-                             (let ((var-ids (car (car ids-and-exps)))
-                                   (var-exps (cadr (car ids-and-exps)))
-                                   (const-ids (car (cadr ids-and-exps)))
-                                   (const-exps (cadr (cadr ids-and-exps))))
-                               (extend-env-const const-ids (list->vector const-exps)
-                                                 (extend-env var-ids var-exps env))))))))
+                           (let* ((ids-and-exps (get-ids-and-exps expressions env))
+                                  (var-ids (car (car ids-and-exps)))
+                                  (var-exps (cadr (car ids-and-exps)))
+                                  (const-ids (car (cadr ids-and-exps)))
+                                  (const-exps (cadr (cadr ids-and-exps))))
+                             (extend-env var-ids var-exps const-ids (list->vector const-exps) env))))))
 
 ; eval-block-program: Evalúa un bloque de programa
 ; Evalua todas la expresiones de un bloque de programa para luego
@@ -231,7 +222,7 @@
 
 (define eval-block-program
   (lambda (f-block-program env)
-    (cases block-program f-block-program   
+    (cases block-program f-block-program
       (fusion-block-program (expression) (eval-expression expression env)))))
 
 ; eval-expression: Evalúa una expresión
@@ -242,20 +233,23 @@
   (lambda (exp env)
     (cases expression exp
       (fusion-identifier-exp (id) id)
-      (fusion-var-exp (type-exp id rhs-exp) 'a)
+      (fusion-var-exp (type-exp id rhs-exp) (extend-env (list id) (eval-expression rhs-exp env) '() (make-vector 0) env))
+      (fusion-const-exp (type-exp id rhs-exp) (extend-env '() '() (list id) (list->vector (list (eval-expression rhs-exp env))) env))
       (fusion-assign-exp (id exp)
-                         (begin
-                           (set-ref!
-                            (apply-env-ref env id)
-                            (eval-expression exp env))
-                           (convert-bool-value #t)))
-      ;! Arreglar problema con app-exp
+                         (if (is-const? env id)
+                             (eopl:error "Variable ~s is a constant" id)
+                             (begin
+                               (set-ref!
+                                (apply-env-ref env id)
+                                (eval-expression exp env))
+                               (convert-bool-value #t))
+                             ))
       (fusion-app-exp (exp args)
-          (let ((proc (deref (apply-env-ref env (eval-expression exp env))))
-                (args (eval-operators args env)))
-                (if (procval? proc)
-                    (apply-procedure proc args)
-                    (eopl:error "Attempt to apply non-procedure ~s" proc))))
+                      (let ((proc (deref (apply-env-ref env (eval-expression exp env))))
+                            (args (eval-operators args env)))
+                        (if (procval? proc)
+                            (apply-procedure proc args)
+                            (eopl:error "Attempt to apply non-procedure ~s" proc))))
       (lit-string-exp (str) (decode-string str))
       (lit-int-exp (int) int)
       (lit-float-exp (float) float)
@@ -271,18 +265,56 @@
               (if (convert-bool-value (eval-expression test-exp env))
                   (eval-expression true-exp env)
                   (eval-expression false-exp env)))
-      
+
       (switch-exp (cond-exp cases-exp bodies-exp default-exp)
-                              (let*
-                                  (
-                                   (condition (eval-expression cond-exp env))
-                                   (cases (eval-operators cases-exp env))
-                                   (true-case (list-find-position condition cases))
-                                   )
-                                (if (number? true-case)
-                                    (eval-expression (list-ref bodies-exp true-case) env)
-                                    (eval-expression default-exp env)
-                                    )) )
+                  (let*
+                      ((condition (eval-identifier cond-exp env))
+                       (cases (eval-operators cases-exp env))
+                       (true-case (list-find-position condition cases)))
+                    (if (number? true-case)
+                        (eval-expression (list-ref bodies-exp true-case) env)
+                        (eval-expression default-exp env)
+                        )))
+      (for-exp (init-exp cond-exp update-exp body-exp)
+               (let loop ((i (eval-expression init-exp env)))
+                 (if (eval-expression cond-exp env)
+                     (begin
+                       (for-each (lambda (exp) (eval-expression exp env)) body-exp)
+                       (loop (eval-expression update-exp env)))
+                     '⨐ ;! Quitar luego
+                     )))
+
+      (while-exp (cond-exp body-exp)
+                 (let loop ()
+                   (if (eval-expression cond-exp env)
+                       (begin
+                         (for-each (lambda (exp) (eval-expression exp env)) body-exp)
+                         (loop))
+                       '⨐ ;! Quitar luego
+                       )))
+
+      (locals-exp (var-exps body)
+                  ;? Evaluar las variables locales
+                  (let*
+                      ((ids-and-exps (get-ids-and-exps var-exps env))
+                       (var-ids (car (car ids-and-exps)))
+                       (var-exps (cadr (car ids-and-exps)))
+                       (const-ids (car (cadr ids-and-exps)))
+                       (const-exps (cadr (cadr ids-and-exps)))
+                       (new-env (extend-env var-ids var-exps const-ids (list->vector const-exps) env)))
+
+                    ;? Evaluar las expresiones del cuerpo
+                    (for-each (lambda (exp) (eval-expression exp new-env)) body)
+                    #t ;? No sé que retornar
+                    )
+                  )
+
+      (block-exp (expression expressions)
+                 (let loop ((acc (eval-expression expression env)) (exps expressions))
+                   (if (null? exps)
+                       acc
+                       (loop (eval-expression (car exps) env) (cdr exps)))))
+
 
       (binary-exp (binary-op exp1 exp2)
                   (let ((args (eval-operators (list exp1 exp2) env)))
@@ -293,16 +325,13 @@
 
 
       (print-exp (expressions)
-                 (begin
-                   ;? En caso de que en la lista de expresiones haya un identificador
-                   ;? Aplicar el apply-env para obtener el valor de la variable
-                   (for-each (lambda (exp)
-                               (cases expression exp
-                                 (fusion-identifier-exp (id) (display (deref (apply-env-ref env id))))
-                                 (else (display (eval-expression exp env))))) expressions)
-                   (newline)
-                   #t
-                   ))
+                 ;? En caso de que en la lista de expresiones haya un identificador
+                 ;? Aplicar el apply-env para obtener el valor de la variable
+                 (for-each (lambda (exp)
+                             (cases expression exp
+                               (fusion-identifier-exp (id) (display (deref (apply-env-ref env id))))
+                               (else (display (eval-expression exp env))))) expressions)
+                 (newline))
 
       (else (eopl:error "Expresión no válida"))
       )))
@@ -324,13 +353,11 @@
       (binary-gt-exp () (> (car values) (cadr values)))
       (binary-gte-exp () (>= (car values) (cadr values)))
 
-      (vector-set-exp (pos) (set-vector (car values) pos (cadr values)))
+      (vector-set-exp (pos) (vector-set (car values) pos (cadr values)))
       (vector-ref-exp () (vector-ref (car values) (cadr values)))
       (vector-append-exp () (cons (vector->list (car values)) (cadr values))) ;! ARREGLAR ESTO
 
       (dict-ref-exp () (ref-dict (car values) (cadr values)))
-      
-
 
 
       (else 'b))
@@ -342,7 +369,7 @@
       (unary-neg-exp () (convert-bool-value (not (convert-bool-value value))))
       (string-length-exp () (string-length value))
       (dict-bool-exp () (eval-dict? value))
-      (dict-make-exp () (if (is-a-dict? value) value (eopl:error "This is not a dict ~s" value ))) 
+      (dict-make-exp () (if (is-a-dict? value) value (eopl:error "This is not a dict ~s" value )))
       (dict-keys-exp () (get-keys value))
       (dict-values-exp () (get-values value))
       (vector-make-exp () (if (vector? value) value (eopl:error "This is not a vector ~s" value )))
@@ -351,7 +378,7 @@
       (list-empty-bool-exp () (convert-bool-value (null? value)))
       (list-head-exp () (car value))
       (list-tail-exp () (cdr value))
-      (list-cons-exp () (if (list? value) value (eopl:error "This is not a list ~s" value ))) 
+      (list-cons-exp () (if (list? value) value (eopl:error "This is not a list ~s" value )))
       (else (eopl:error "Error to process ~s" value)))
     ))
 
@@ -366,7 +393,7 @@
 (define-datatype dictionary dictionary?
   (make-dict (dict-entries (list-of entry?))))
 
-(define is-a-dict? 
+(define is-a-dict?
   (lambda (value) (if (dictionary? value) #t #f)))
 
 ; create-dictionary: Crea una lista de datatypes de dictionary
@@ -446,10 +473,10 @@
                     (vector-set! new-vec (- i 1) (vector-ref vec i)))
                 (loop (+ i 1)))))))))
 
-; set-vector
+; vector-set
 ; Cambia el valor de la posición pos del vector vec por el valor val.
 
-(define set-vector
+(define vector-set
   (lambda (vec pos val)
     (vector-set! vec pos val)
     vec))
@@ -461,6 +488,8 @@
   (a-ref (position integer?)
          (vec vector?)))
 
+; set-ref!: Cambia el valor de la posición pos del vector vec por el valor val.
+; si una referencia es una constante, no se puede cambiar su valor. lanzará un error.
 (define set-ref!
   (lambda (ref val)
     (cases reference ref
@@ -513,12 +542,12 @@
 (define eval-operators
   (lambda (ops env)
     (map (lambda (op)
-          (cases expression op
-           (fusion-identifier-exp (id) (apply-env env id))
-           (else (eval-expression op env)))) ops)))
+           (cases expression op
+             (fusion-identifier-exp (id) (apply-env env id))
+             (else (eval-expression op env)))) ops)))
 
-; get-ids-and-exp: Obtiene una lista con los identificadores y valores de las variables y constantes
-; ((ids-vars, vals-vars) (ids-const, vals-consts))
+;* get-ids-and-exp: Obtiene una lista con los identificadores y valores de las variables y constantes
+;* ((ids-vars, vals-vars) (ids-const, vals-consts))
 (define get-ids-and-exps
   (lambda (expressions env)
     (let loop ((exps expressions) (var-ids '()) (var-exps '()) (const-ids '()) (const-exps '()))
@@ -531,6 +560,33 @@
               (fusion-const-exp (type-exp id assigned-exp)
                                 (loop (cdr exps) var-ids var-exps (cons id const-ids) (cons (eval-expression assigned-exp env) const-exps)))
               (else (loop (cdr exps) var-ids var-exps const-ids const-exps))))))))
+
+;* is-a-proc?: Verifica si un valor es un procedimiento
+(define is-a-proc?
+  (lambda (val)
+    (cases expression val
+      (lit-proc-exp (_types-ids _ids _body) #t)
+      (else #f))))
+
+;* is-const?: Verifica si una variable es constante en el ambiente
+(define is-const?
+  (lambda (env id)
+    (cases environment env
+      (empty-env-record () #f)
+      (extended-env-record (_ids _vals const-ids _const-vals _env)
+                           (if (list-find-position id const-ids)
+                               #t
+                               (is-const? _env id))))))
+
+;* eval-identifier: Evalua la expresión, si es un identificador, lo busca en el ambiente
+;* si no, evalua la expresión normalmente
+(define eval-identifier
+  (lambda (exp env)
+    (cases expression exp
+      (fusion-identifier-exp (id) (apply-env env id))
+      (else (eval-expression exp env)))
+    ))
+
 
 ;*********************************************************************************
 ;* Construyendo ambiente
@@ -549,26 +605,21 @@
     (empty-env-record)))
 
 (define extend-env
-  (lambda (ids vals env)
-    (extended-env-record ids (list->vector vals) '() (make-vector 0)  env)))
+  (lambda (ids vals ids-const vals-const env)
+    (extended-env-record ids (list->vector vals) ids-const vals-const env)))
 
-(define extend-env-const
-  (lambda (ids vals env)
-    (extended-env-record '() (make-vector 0) ids vals env)))
-
+;! Solucionar: NO ESTÁN IMPLEMENTADAS LAS FUNCIONES RECURSIVAS
 (define extend-env-recursively
   (lambda (proc-names identifiers bodies old-env)
-    (let
-        ((len (length proc-names)))
-      (let
-          ((vec (make-vector len)))
-        (let
-            ((env (extended-env-record proc-names vec '() (make-vector 0) old-env)))
-          (for-each
-           (lambda (pos ids body)
-             (vector-set! vec pos (closure ids body env)))
-           (iota len) identifiers bodies)
-          env)))))
+    (let*
+        ((len (length proc-names))
+         (vec (make-vector len))
+         (env (extended-env-record proc-names vec '() (make-vector 0) old-env)))
+      (for-each
+       (lambda (pos ids body)
+         (vector-set! vec pos (closure ids body env)))
+       (iota len) identifiers bodies)
+      env)))
 
 (define apply-env
   (lambda (env id)
@@ -601,7 +652,7 @@
   (lambda (proc args)
     (cases procval proc
       (closure (ids body env)
-               (eval-expression body (extend-env ids args env))))))
+               (eval-expression body (extend-env ids args '() (make-vector 0) env))))))
 
 
 ;*********************************************************************************
