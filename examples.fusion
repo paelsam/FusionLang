@@ -1,11 +1,215 @@
-// Definición de variables y constantes
-int @x = 10;
-const int @y = 20;
-float @z = 5.7;
-string @name = "John Doe";
-bool @is_active = True;
+GLOBALS {                           
+  int @number = 5;
+  const proc @suma = function (int @a, int @b) { return + @a @b };
+} PROGRAM {
+  proc @main = function () { 
+    return =>@suma(5, 5)
+  }
+}
 
-// Funciones
-=> function (int @x) {
-  return * @x @x
-}(2);
+
+GLOBALS {                           
+  int @number = 5;
+  const proc @suma = function (int @a, int @b) { return + @a @b };
+} PROGRAM {
+  proc @main = function () { 
+    return @make-dict (1,3,4,5,5)
+  }
+}
+
+GLOBALS {                           
+  int @number = 5;
+  const proc @suma = function (int @a, int @b) { return + @a @b };
+} PROGRAM {
+  proc @main = function () { 
+    return @make-dict { 1:2 , 3:4}
+  }
+}
+
+GLOBALS {                           
+  int @number = 5;
+  const proc @suma = function (int @a, int @b) { return + @a @b };
+} PROGRAM {
+  proc @main = function () { 
+    return @make-vector [1,2,3,4,5]
+  }
+}
+
+GLOBALS {                           
+  int @number = 5;
+  const proc @suma = function (int @a, int @b) { return + @a @b };
+} PROGRAM {
+  proc @main = function () { 
+    return if (True) { print("Hola") } else { print("Mundo") }
+  }
+}
+
+GLOBALS {                           
+  int @number = 3;
+  const proc @suma = function (int @a, int @b) { return + @a @b };
+} PROGRAM {
+  proc @main = function () { 
+    return switch (@number){
+		case 1:{
+			print("Nada")
+		}
+		case 2:{
+			print("Aún nada")
+		}
+		case 3:{
+			print("Ni pio", =>@suma(20,22))
+		}
+		default: {
+			"_casoPorDefecto"
+		}
+	}
+  }
+}
+
+GLOBALS {                           
+  int @number = 5;
+  const proc @suma = function (int @a, int @b) { return + @a @b };
+} PROGRAM {
+  proc @main = function () { 
+    return + @number 3
+  }
+}
+
+
+
+GLOBALS {
+	const int max_num = 5;
+	proc factorial = function (int num) {
+		return LOCALS {
+			int result = 1;
+			int i = 1;
+		} {
+			for (-> i 1; <= i num; -> i + i 1) {
+				-> result * result i
+			};
+			result;
+		}
+	};
+	proc resta = function (int a, int b) {
+		return ~ a b
+	};
+} 
+PROGRAM {
+	proc main = function () {
+		return @resta(2,3)
+	}
+}
+
+
+
+GLOBALS {
+ int i = 0;
+}
+PROGRAM {
+
+	proc @main = function () {
+		return while (<= i 10) {
+			print("Hola mundo")
+			print(i)
+			-> i + i 1
+		}
+	}
+}
+
+
+
+
+
+GLOBALS {
+	const int @i = 1;
+}  PROGRAM {
+	proc @main = function () {
+		return -> @i 2
+	}
+}
+
+GLOBALS {
+   int @i = 1;
+}  PROGRAM {
+	proc @main = function () {
+		return for (-> @i 1; <= @i 10; -> @i + @i 1) {
+			print("Hola mundo")
+		}
+	}
+}
+
+
+
+GLOBALS {
+	const int @valor = 15;
+	proc @square = function (int @x) {
+		return BLOCK {
+			print("Funcion square");
+			* @x @x;
+		}
+	};
+} 
+PROGRAM {
+	proc @main = function () {
+		return BLOCK {
+			print("Bienvenidos a FusionLang");
+			=>@square(15);
+		}
+	}	
+}
+
+
+GLOBALS {
+	int @a = 10;
+	int @b = 20;
+}
+PROGRAM {
+	proc @main = function () {
+		return LOCALS {
+			int @a = 5;
+			int @b = 30;
+		} {
+			print(@a);
+			print(@b);
+		}
+	}
+}
+
+GLOBALS {
+	const float @base = 10.5;
+	proc @triangle = function (float @base, float @height) {
+		return LOCALS {
+			float @area = 0;
+			float @b = @base;
+			float @h = @height; 
+		} {
+			print("Esta es la primera instruccion del cuerpo");
+			print("Esta es la segunda instruccion del cuerpo y la siguiente es la tercera");
+			-> @area * @base / @height 2;
+			print(@area);
+		}
+	};
+}
+PROGRAM {
+	proc @main = function () {
+		return =>@triangle(@base, 6.4)
+	}
+}
+
+
+
+% Función recursiva
+GLOBALS {
+	const proc factorial = function(int number) {
+		return if (== number 0) {
+			3
+		} else {
+			* number @factorial(~ number 1)
+		}
+	};
+} 
+PROGRAM {
+	proc main = function () {
+		return @factorial(3)
+	}
+}
