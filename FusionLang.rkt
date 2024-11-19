@@ -134,7 +134,7 @@
     ;? Implementación de tipos para grafos dirigidos
     (type-exp ("graph")                                               type-graph-exp)
     (type-exp ("edges")                                               type-edges-exp)
-    (type-exp ("vertex")                                              type-vertex-exp)
+    (type-exp ("vertices")                                            type-vertex-exp)
 
     ; Primitivas internas de las listas
 
@@ -142,14 +142,14 @@
     (expression ("@empty")                                            list-empty-exp)
     (unary-prim ("@head")                                             list-head-exp)
     (unary-prim ("@tail")                                             list-tail-exp)
-    (unary-prim ("@make-list")                                        list-cons-exp)
+    (binary-prim ("@make-list")                                        list-cons-exp)
     (unary-prim ("@list?")                                            list-bool-exp)
     (binary-prim ("@append")                                          list-append-exp)
 
     ; Primitivas internas de los vectores
 
     (unary-prim ("@vector?")                                          vector-bool-exp)
-    (unary-prim ("@make-vector")                                      vector-make-exp)
+    (binary-prim ("@make-vector")                                     vector-make-exp)
     (binary-prim ("@ref-vector")                                      vector-ref-exp) ;? Esto recibe 2 argumentos (vector, index)
     (binary-prim ("@vector-set" "[" number-int "]")                   vector-set-exp) ;? Esto recibe 2 argumentos (vector, value)
     (binary-prim ("@append-vector")                                   vector-append-exp)
@@ -171,7 +171,7 @@
 
     ; Secuenciación
     (expression ("BLOCK" "{" expression ";"
-                         (arbno expression ";") "}")              block-exp)
+                         (arbno expression ";") "}")                  block-exp)
     (expression
      ("LOCALS" "{" (arbno expression ";") "}"
                "{" (arbno expression ";") "}")                        locals-exp)
@@ -196,14 +196,18 @@
       ("print" "(" (separated-list expression ",") ")")               print-exp)
 
     ;? Primitivas de los grafos
-    ;! Por hacer
 
-    ;* graph -> (graph vertex edges)
-    ;* edges -> (edges (arbno (vertex vertex)))
-    ;* vertices -> (vertices (arbno vetex))
+    (expression ("@graph" expression expression)                      graph-exp)
+    (expression ("@v" "[" (separated-list identifier ",") "]")        vertices-exp)
+    (expression ("@e" "[" (separated-list edge ",") "]")              edges-exp)
+    (edge ("(" identifier "=>" identifier ")")                        edge-exp)
 
-    ; (expression ("(" "graph" expression expression ")")              graph-exp)
-    ; (expression ("(" "edges"  (arbno expression expression) ")")      edges-exp)
+    (unary-prim ("@vertices")                                         graph-vertices-exp)
+    (unary-prim ("@edges")                                            graph-edges-exp)
+    (unary-prim ("@outgoin-neighbors" expression)                                graph-outgoing-neighbors-exp)
+    (unary-prim ("@incoming-neighbors" expression)                               graph-incoming-neighbors-exp)
+    ;! Esto es raro XD
+    (unary-prim ("@add-edge" expression)                              graph-add-edge-exp)
 
 
 
@@ -258,8 +262,8 @@
   (lambda (exp env)
     (cases expression exp
       (fusion-identifier-exp (id) id)
-      (fusion-var-exp (type-exp id rhs-exp) (extend-env (list id) (eval-expression rhs-exp env) '() (make-vector 0) env))
-      (fusion-const-exp (type-exp id rhs-exp) (extend-env '() '() (list id) (list->vector (list (eval-expression rhs-exp env))) env))
+      (fusion-var-exp (_type-exp id rhs-exp) (extend-env (list id) (eval-expression rhs-exp env) '() (make-vector 0) env))
+      (fusion-const-exp (_type-exp id rhs-exp) (extend-env '() '() (list id) (list->vector (list (eval-expression rhs-exp env))) env))
       (fusion-assign-exp (id exp)
                          (if (is-const? env id)
                              (eopl:error "Variable ~s is a constant" id)
@@ -281,7 +285,7 @@
       (lit-float-exp (float) float)
       (lit-bool-true-exp () 'True)
       (lit-bool-false-exp () 'False)
-      (lit-proc-exp (types ids body) (closure ids body env))
+      (lit-proc-exp (_types ids body) (closure ids body env))
       (lit-list-exp (expressions) (eval-operators expressions env))
       (lit-vector-exp (expressions) (list->vector (eval-operators expressions env)))
       (lit-dict-exp (keys values) (create-dictionary (eval-operators keys env) (eval-operators values env)))
@@ -302,12 +306,12 @@
                         (eval-expression default-exp env)
                         )))
       (for-exp (init-exp cond-exp update-exp body-exp)
-               (let loop ((i (eval-expression init-exp env)))
+               (let loop ((_i (eval-expression init-exp env)))
                  (if (eval-expression cond-exp env)
                      (begin
                        (for-each (lambda (exp) (eval-expression exp env)) body-exp)
                        (loop (eval-expression update-exp env)))
-                     '⨐
+                     #t
                      )))
 
       (while-exp (cond-exp body-exp)
@@ -316,7 +320,7 @@
                        (begin
                          (for-each (lambda (exp) (eval-expression exp env)) body-exp)
                          (loop))
-                       '⨐
+                       #t
                        )))
 
       (locals-exp (var-exps body)
@@ -352,17 +356,35 @@
                     (eval-binary-prim binary-op args)))
 
       (unary-exp (unary-op exp)
-                 (eval-unary-prim unary-op (eval-identifier exp env)))
+                 (eval-unary-prim unary-op (eval-identifier exp env) env))
 
 
       (print-exp (expressions)
                  ;? En caso de que en la lista de expresiones haya un identificador
                  ;? Aplicar el apply-env para obtener el valor de la variable
+                 ;? Si el print tiene varias expresiones, se imprimen todas separadas por un espacio
                  (for-each (lambda (exp)
-                             (cases expression exp
-                               (fusion-identifier-exp (id) (display (deref (apply-env-ref env id))))
-                               (else (display (eval-expression exp env))))) expressions)
-                 (newline))
+                             (display (eval-identifier exp env))
+                             (display " ")) expressions)
+                 (newline) #t)
+
+      ;* Graph pide 2 expresiones, vertices y aristas
+      ;* Verificar que las expresiones sean de tipo vertices y aristas
+      ;* Luego crear un grafo con las expresiones
+
+      (graph-exp (vertices edges)
+                 (let
+                     ((vertices (eval-identifier vertices env))
+                      (edges (eval-identifier edges env)))
+                   (cases expression vertices
+                     (vertices-exp (_vertices) (cases expression edges
+                                                 (edges-exp (_edges) (graph-exp vertices edges))
+                                                 (else (eopl:error "Invalid expression"))
+                                                 ))
+                     (else (eopl:error "Invalid expression")))))
+      (edges-exp (edges) (edges-exp edges))
+      (vertices-exp (vertices) (vertices-exp vertices))
+
 
       (else (eopl:error "Expresión no válida"))
       )))
@@ -370,38 +392,35 @@
 (define eval-binary-prim
   (lambda (prim values)
     (cases binary-prim prim
-      (binary-add-exp () (cond
-                           ((and (string? (car values)) (string? (cadr values))) (string-append (car values) (cadr values)))
-                           ((and (number? (car values)) (number? (cadr values))) (+ (car values) (cadr values)))
-                           (else (eopl:error "Error to process ~s" values))))
+      (binary-add-exp () (apply-operator + string-append values))
       (binary-sub-exp () (- (car values) (cadr values)))
       (binary-mul-exp ()
                       (* (car values) (cadr values)))
       (binary-div-exp () (/ (car values) (cadr values)))
-      (binary-eq-exp () (cond
-                          ((and (string? (car values)) (string? (cadr values))) (string=? (car values) (cadr values)))
-                          ((and (number? (car values)) (number? (cadr values))) (equal? (car values) (cadr values)))
-                          (else (eopl:error "Error to process ~s" values))))
+      (binary-eq-exp () (apply-operator equal? string=? values))
       (binary-neq-exp () (not (equal? (car values) (cadr values))))
-      (binary-lt-exp () (< (car values) (cadr values)))
-      (binary-lte-exp () (<= (car values) (cadr values)))
-      (binary-gt-exp () (> (car values) (cadr values)))
-      (binary-gte-exp () (>= (car values) (cadr values)))
+      (binary-lt-exp () (apply-operator < string<? values))
+      (binary-lte-exp () (apply-operator <= string<=? values))
+      (binary-gt-exp ()  (apply-operator > string>? values))
+      (binary-gte-exp () (apply-operator >= string>=? values))
 
       (vector-set-exp (pos) (vector-set (car values) pos (cadr values)))
       (vector-ref-exp () (vector-ref (car values) (cadr values)))
       (vector-append-exp () (vector-append (car values) (cadr values)))
+      (vector-make-exp () (make-vector (car values) (cadr values)))
+
+      (list-cons-exp () (map (lambda (_val) (cadr values)) (iota (car values))))
 
       (dict-ref-exp () (ref-dict (car values) (cadr values)))
       (dict-set-exp () (dict-set (car values) (cadr values)))
 
-
+      (dict-append-exp () (append-dict (car values) (cadr values)))
 
       (else 'b))
     ))
 
 (define eval-unary-prim
-  (lambda (prim value)
+  (lambda (prim value env)
     (cases unary-prim prim
       (unary-neg-exp () (convert-bool-value (not (convert-bool-value value))))
       (unary-add-exp () (+ value 1))
@@ -411,13 +430,28 @@
       (dict-make-exp () (if (is-a-dict? value) value (eopl:error "This is not a dict ~s" value )))
       (dict-keys-exp () (get-keys value))
       (dict-values-exp () (get-values value))
-      (vector-make-exp () (if (vector? value) value (eopl:error "This is not a vector ~s" value )))
       (vector-bool-exp () (convert-bool-value (vector? value)))
       (vector-delete-exp (pos) (vector-delete value pos))
       (list-empty-bool-exp () (convert-bool-value (null? value)))
       (list-head-exp () (car value))
       (list-tail-exp () (cdr value))
-      (list-cons-exp () (if (list? value) value (eopl:error "This is not a list ~s" value )))
+
+      (graph-vertices-exp () (cases expression value
+                                               (graph-exp (v _edges) v)
+                                               (else (eopl:error "Invalid expression"))))
+      (graph-edges-exp () (cases expression value
+                            (graph-exp (_vertices edges) edges)
+                            (else (eopl:error "Invalid expression"))))
+
+      (graph-add-edge-exp (_pair) 
+        (cases expression _pair
+          (lit-list-exp (expressions) (add-edge value (map (lambda (exp) (eval-expression exp env)) expressions)))
+          (else (eopl:error "Invalid expression"))))
+      
+      (graph-outgoing-neighbors-exp (vertex) (vecinos-salientes value (eval-expression vertex env)))
+      (graph-incoming-neighbors-exp (vertex) (vecinos-entrantes value (eval-expression vertex env)))
+        
+
       (else (eopl:error "Error to process ~s" value)))
     ))
 
@@ -518,6 +552,14 @@
       (make-entry (key value)
                   (string-append (eval-identifier key env) " : " (eval-identifier value env))
                   ))))
+
+(define append-dict
+  (lambda (dict-to-append dict-to-append-with)
+    (cases dictionary dict-to-append
+      (make-dict (entries)
+                 (cases dictionary dict-to-append-with
+                   (make-dict (entries-with)
+                              (make-dict (append entries entries-with))))))))
 
 
 ;*********************************************************************************
@@ -636,6 +678,7 @@
 ;* get-ids-and-exp: Obtiene una lista con los identificadores y valores de las variables, constantes y funciones
 ;* ((ids-vars, vals-vars) (ids-const, vals-consts) (ids-procs, args-procs, bodies-procs) (ids-const-procs, args-const-procs, bodies-const-procs))
 ;! La función funciona, pero es muy larga y difícil de entender
+;! No hacía falta hacer una lista que contenga la lista de valores de las constantes y las funciones
 (define get-ids-and-exps
   (lambda (expressions env)
     (let loop (
@@ -719,6 +762,146 @@
       (else (eval-expression exp env)))
     ))
 
+;; p-append: Lista, Lista -> Lista
+;; usage: (p-append l1 l2) -> Lista de elementos de l1 y l2
+(define p-append
+  (lambda (l1 l2)
+    (cond
+      [(null? l1) l2]
+      [(null? l2) l1]
+      [else (cons (car l1) (p-append (cdr l1) l2 ))]
+      )
+    ))
+
+;;* add-vertices : Graph, Edge -> Graph
+;;* usage: (add-vertices graph edge) -> Graph
+; Recibe un grafo y una arista y devuelve un nuevo grafo con los nuevos vertices añadidos
+(define add-vertices
+  (lambda (graph-e edge)
+    (if (null? edge)
+        graph-e
+        (cases expression graph-e
+          (graph-exp (vertices-e edges-e)
+                     (cases expression vertices-e
+                       (vertices-exp (vertices-list)
+                                     (if (vertex-exist? (car edge) vertices-list)
+                                         (add-vertices graph-e (cdr edge))
+                                         (add-vertices (graph-exp (vertices-exp (p-append vertices-list (list (car edge)))) edges-e) (cdr edge))))
+                       (else (eopl:error "Invalid expression"))
+                       ))
+          (else (eopl:error "Invalid expression"))
+          ))))
+
+;;* edge-exist? : Edge, List -> Boolean
+;;* usage: (edge-exist? edge-to-add edges-list) -> Boolean
+; Verifica si una arista ya existe en el conjunto de aristas
+(define edge-exist?
+  (lambda (edge-to-add edges-list-exp)
+    (if (null? edges-list-exp)
+        #f
+        (cases edge (car edges-list-exp)
+          (edge-exp (v1 v2)
+                    (if (and (eq? v1 (car edge-to-add)) (eq? v2 (cadr edge-to-add)))
+                        #t
+                        (edge-exist? edge-to-add (cdr edges-list-exp))))))))
+
+;;* add-vertices : Graph, Edge -> Graph
+;;* usage: (add-vertices graph vertex) -> Graph
+;; Verifica si el vertice existe en una lista de vertices
+(define vertex-exist?
+  (lambda (vertex vertices)
+    (if (null? vertices)
+        #f
+        (if (equal? vertex (car vertices))
+            #t
+            (vertex-exist? vertex (cdr vertices))
+            )
+        )
+    ))
+
+;;* add-edge : graph, edge -> graph
+;;* usage: (add-edge graph edge) -> graph
+;; Añade una arista nueva al conjunto de aristas del grafo
+;; No deben repetirse aristas
+(define add-edge
+  (lambda (exp edge)
+    (cases expression (add-vertices exp edge)
+      (graph-exp (_ edges-list-exp)
+                 (cases expression edges-list-exp
+                   (edges-exp (edges-list)
+                              (if (edge-exist? edge edges-list)
+                                  (graph-exp _ edges-list-exp)
+                                  (graph-exp _ (edges-exp (p-append edges-list (list (edge-exp (car edge) (cadr edge))))))
+                                  ))
+                   (else (eopl:error "Invalid expression"))))
+      (else (eopl:error "Invalid expression")))))
+
+
+;;* vecinos-salientes : graph, Symbol -> List
+;;* usage: (vecinos-salientes graph vertice) -> List
+;; Obtiene los vecinos salientes de un vértice
+(define vecinos-salientes
+  (lambda (exp vertice)
+    (cases expression exp
+      (graph-exp (_ edges-list-exp)
+                 (cases expression edges-list-exp
+                   (edges-exp (edges-list) (vecinos-salientes-aux edges-list vertice))
+                   (else  (eopl:error "Invalid expression"))))
+      (else (eopl:error "Invalid expression")))))
+
+
+;;* vecinos-salientes-aux : List, Symbol -> List
+;;* usage: (vecinos-salientes-aux edges-list vertice) -> List
+;; Función auxiliar para obtener los vecinos salientes de un vértice
+(define vecinos-salientes-aux
+  (lambda (edges-list vertice)
+    (if (null? edges-list)
+        '()
+        (cases edge (car edges-list)
+          (edge-exp (v1 v2)
+                    (if (eq? v1 vertice)
+                        (cons v2 (vecinos-salientes-aux (cdr edges-list) vertice))
+                        (vecinos-salientes-aux (cdr edges-list) vertice)))
+          ))))
+
+
+;;* vecinos-entrantes : graph, Symbol -> List
+;;* usage: (vecinos-entrantes graph vertice) -> List
+;; Obtiene los vecinos entrantes de un vértice
+;; Los vecinos entrantes son aquellos vértices que tienen una arista
+;; que llega al vértice dado
+(define vecinos-entrantes
+  (lambda (exp vertice)
+    (cases expression exp
+      (graph-exp (_ edges-list-exp)
+                 (cases expression edges-list-exp
+                   (edges-exp (edges-list) (vecinos-entrantes-aux edges-list vertice))
+                   (else  (eopl:error "Invalid expression"))))
+      (else (eopl:error "Invalid expression")))))
+
+
+;;* vecinos-entrantes-aux : List, Symbol -> List
+;; Función auxiliar para obtener los vecinos entrantes
+;; de un vértice
+(define vecinos-entrantes-aux
+  (lambda (edges-list vertice)
+    (if (null? edges-list)
+        '()
+        (cases edge (car edges-list)
+          (edge-exp (v1 v2)
+                    (if (eq? v2 vertice)
+                        (cons v1 (vecinos-entrantes-aux (cdr edges-list) vertice))
+                        (vecinos-entrantes-aux (cdr edges-list) vertice)))
+          ))))
+
+;* apply-operator: Aplica un predicado a una pareja de valores en base al tipo de dato de los valores
+;* los valores ya están evaluados
+(define apply-operator
+  (lambda (pred-number pred-string values)
+    (cond
+      [(and (number? (car values)) (number? (cadr values))) (pred-number (car values) (cadr values))]
+      [(and (string? (car values)) (string? (cadr values))) (pred-string (car values) (cadr values))]
+      [else (eopl:error "Error to process ~s" values)])))
 
 ;*********************************************************************************
 ;* Construyendo ambiente
