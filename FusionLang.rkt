@@ -54,10 +54,8 @@
     (number-int ("-" digit (arbno digit)) number)
     (number-float ((arbno digit) "." (arbno digit)) number)
     (number-float ("-" (arbno digit) "." (arbno digit)) number)
-    (fusion-string ("\"" (or letter digit "_" "$" "&" " " "¿" "?" "!" "." "," ";" ":" "-" "+" "*" "/" "\\" "|" "(" ")" "[" "]" "{" "}" "<" ">" "=" "^" "%") 
-                         (arbno (or letter digit "_" "$" "%" "&" " " "¿" "?" "!" "." "," ";" ":" "-" "+" "*" "/" "\\" "|" "(" ")" "[" "]" "{" "}" "<" ">" "=" "^" "%")) "\"") string)
-    (fusion-string ("'" (or letter digit "_" "$" "&" " " "¿" "?" "!" "." "," ";" ":" "-" "+" "*" "/" "\\" "|" "(" ")" "[" "]" "{" "}" "<" ">" "=" "^" "%") 
-                        (arbno (or letter digit "_" "$" "%" "&" " " "¿" "?" "!" "." "," ";" ":" "-" "+" "*" "/" "\\" "|" "(" ")" "[" "]" "{" "}" "<" ">" "=" "^" "%")) "'") string)
+    (fusion-string ("\"" (arbno (or letter digit "_" "$" "%" "&" " " "¿" "?" "!" "." "," ";" ":" "-" "+" "*" "/" "\\" "|" "(" ")" "[" "]" "{" "}" "<" ">" "=" "^" "%")) "\"") string)
+    (fusion-string ("'"  (arbno (or letter digit "_" "$" "%" "&" " " "¿" "?" "!" "." "," ";" ":" "-" "+" "*" "/" "\\" "|" "(" ")" "[" "]" "{" "}" "<" ">" "=" "^" "%")) "'") string)
     ))
 
 ; Especificación sintáctica (gramática)
@@ -67,7 +65,7 @@
     (block-global
      ("GLOBALS" "{" (arbno expression ";") "}")                       fusion-block-global)
     (block-program
-     ("PROGRAM" "{" "proc" "<" "void" ">" "main" "=" "function" "(" ")"
+     ("PROGRAM" "{" "proc" "->" "any" "main" "=" "function" "(" ")"
                 "{" "return" expression "}" "}")                      fusion-block-program)
 
     (expression (identifier)                                          fusion-identifier-exp)
@@ -126,7 +124,7 @@
     (type-exp ("float")                                               type-float-exp)
     (type-exp ("string")                                              type-string-exp)
     (type-exp ("bool")                                                type-bool-exp)
-    (type-exp ("proc" "<" type-exp "->" type-exp ">")                                                type-proc-exp)
+    (type-exp ("proc" "->" type-exp)                                  type-proc-exp)
     (type-exp ("list" "<" type-exp ">")                               type-list-exp)
     (type-exp ("vector" "<" type-exp ">")                             type-vector-exp)
     (type-exp ("dict" "<" type-exp "," type-exp ">")                  type-dict-exp)
@@ -142,7 +140,8 @@
     (expression ("@empty")                                            list-empty-exp)
     (unary-prim ("@head")                                             list-head-exp)
     (unary-prim ("@tail")                                             list-tail-exp)
-    (binary-prim ("@make-list")                                        list-cons-exp)
+    (unary-prim ("@list-length")                                      list-length-exp)
+    (binary-prim ("@make-list")                                       list-cons-exp)
     (unary-prim ("@list?")                                            list-bool-exp)
     (binary-prim ("@append")                                          list-append-exp)
 
@@ -151,9 +150,10 @@
     (unary-prim ("@vector?")                                          vector-bool-exp)
     (binary-prim ("@make-vector")                                     vector-make-exp)
     (binary-prim ("@ref-vector")                                      vector-ref-exp) ;? Esto recibe 2 argumentos (vector, index)
-    (binary-prim ("@vector-set" "[" number-int "]")                   vector-set-exp) ;? Esto recibe 2 argumentos (vector, value)
+    (binary-prim ("@vector-set" "[" expression "]")                   vector-set-exp) ;? Esto recibe 2 argumentos (vector, value)
     (binary-prim ("@append-vector")                                   vector-append-exp)
-    (unary-prim ("@delete-val-vector" "[" number-int "]")             vector-delete-exp)
+    (unary-prim ("@delete-val-vector" "[" expression "]")             vector-delete-exp)
+    (unary-prim ("@length-vector")                                    vector-length-exp)
 
     ; Primitivas internas de los diccionarios
 
@@ -202,12 +202,17 @@
     (expression ("@e" "[" (separated-list edge ",") "]")              edges-exp)
     (edge ("(" identifier "=>" identifier ")")                        edge-exp)
 
+    ;? Primitivas para pasar ejes a listas
+    (unary-prim ("@edges-list")                                       graph-edges-list-exp)
+    (unary-prim ("@vertices-list")                                    graph-vertices-list-exp)
+
     (unary-prim ("@vertices")                                         graph-vertices-exp)
     (unary-prim ("@edges")                                            graph-edges-exp)
-    (unary-prim ("@outgoin-neighbors" expression)                                graph-outgoing-neighbors-exp)
-    (unary-prim ("@incoming-neighbors" expression)                               graph-incoming-neighbors-exp)
+    (unary-prim ("@outgoin-neighbors" expression)                     graph-outgoing-neighbors-exp)
+    (unary-prim ("@incoming-neighbors" expression)                    graph-incoming-neighbors-exp)
     ;! Esto es raro XD
     (unary-prim ("@add-edge" expression)                              graph-add-edge-exp)
+    (unary-prim ("@add-vertex" expression)                            graph-add-vertex-exp)
 
 
 
@@ -272,11 +277,11 @@
                              (begin
                                (set-ref!
                                 (apply-env-ref env id)
-                                (eval-expression exp env))
+                                (eval-identifier exp env))
                                (convert-bool-value #t))
                              ))
       (fusion-app-exp (exp args)
-                      (let ((proc (deref (apply-env-ref env (eval-expression exp env))))
+                      (let ((proc (eval-identifier exp env))
                             (args (eval-operators args env)))
                         (if (procval? proc)
                             (apply-procedure proc args)
@@ -304,8 +309,8 @@
                        (cases (eval-operators cases-exp env))
                        (true-case (list-find-position condition cases)))
                     (if (number? true-case)
-                        (eval-expression (list-ref bodies-exp true-case) env)
-                        (eval-expression default-exp env)
+                        (eval-identifier (list-ref bodies-exp true-case) env)
+                        (eval-identifier default-exp env)
                         )))
       (for-exp (init-exp cond-exp update-exp body-exp)
                (let loop ((_i (eval-expression init-exp env)))
@@ -355,7 +360,7 @@
 
       (binary-exp (binary-op exp1 exp2)
                   (let ((args (eval-operators (list exp1 exp2) env)))
-                    (eval-binary-prim binary-op args)))
+                    (eval-binary-prim binary-op args env)))
 
       (unary-exp (unary-op exp)
                  (eval-unary-prim unary-op (eval-identifier exp env) env))
@@ -366,7 +371,10 @@
                  ;? Aplicar el apply-env para obtener el valor de la variable
                  ;? Si el print tiene varias expresiones, se imprimen todas separadas por un espacio
                  (for-each (lambda (exp)
-                             (display (eval-identifier exp env))
+                             (cond
+                              [(equal? #t (eval-identifier exp env)) (display "True")]
+                              [(equal? #f (eval-identifier exp env)) (display "False")]
+                              [else (display (eval-identifier exp env))])
                              (display " ")) expressions)
                  (newline) #t)
 
@@ -389,13 +397,13 @@
       )))
 
 (define eval-binary-prim
-  (lambda (prim values)
+  (lambda (prim values env)
     (cases binary-prim prim
       (binary-add-exp () (apply-operator + string-append values))
       (binary-sub-exp () (- (car values) (cadr values)))
       (binary-mul-exp ()
                       (* (car values) (cadr values)))
-      (binary-mod-exp () (remainder (car values) (cadr values)))
+      (binary-mod-exp () (modulo (car values) (cadr values)))
       (binary-div-exp () (/ (car values) (cadr values)))
       (binary-eq-exp () (apply-operator equal? string=? values))
       (binary-neq-exp () (not (equal? (car values) (cadr values))))
@@ -404,7 +412,7 @@
       (binary-gt-exp ()  (apply-operator > string>? values))
       (binary-gte-exp () (apply-operator >= string>=? values))
 
-      (vector-set-exp (pos) (vector-set (car values) pos (cadr values)))
+      (vector-set-exp (pos) (vector-set (car values) (eval-identifier pos env) (cadr values)))
       (vector-ref-exp () (vector-ref (car values) (cadr values)))
       (vector-append-exp () (vector-append (car values) (cadr values)))
       (vector-make-exp () (make-vector (car values) (cadr values)))
@@ -423,7 +431,7 @@
 (define eval-unary-prim
   (lambda (prim value env)
     (cases unary-prim prim
-      (unary-neg-exp ()  (not (convert-bool-value value)))
+      (unary-neg-exp ()  (not value))
       (unary-add-exp () (+ value 1))
       (unary-sub-exp () (- value 1))
       (string-length-exp () (string-length value))
@@ -432,11 +440,31 @@
       (dict-keys-exp () (get-keys value))
       (dict-values-exp () (get-values value))
       (vector-bool-exp ()  (vector? value))
-      (vector-delete-exp (pos) (vector-delete value pos))
+      (vector-delete-exp (pos) (vector-delete value (eval-identifier pos env)))
+      (vector-length-exp () (vector-length value))
       (list-empty-bool-exp () (null? value))
       (list-head-exp () (car value))
       (list-tail-exp () (cdr value))
+      (list-length-exp () (length value))
       (list-bool-exp () (list? value))
+
+      (graph-edges-list-exp ()
+        (cases expression value
+          (graph-exp (_vertices edges) 
+            (cases expression edges
+              (edges-exp (_edges) _edges)
+              (else (eopl:error "Invalid expression"))))
+          (else (eopl:error "Invalid expression"))))
+      
+      (graph-vertices-list-exp ()
+        (cases expression value
+          (graph-exp (vertices _edges) 
+            (cases expression vertices
+              (vertices-exp (_vertices) _vertices)
+              (else (eopl:error "Invalid expression"))))
+          (else (eopl:error "Invalid expression"))))
+
+      
 
       (graph-vertices-exp () (cases expression value
                                (graph-exp (v _edges) v)
@@ -445,10 +473,11 @@
                             (graph-exp (_vertices edges) edges)
                             (else (eopl:error "Invalid expression"))))
 
-      (graph-add-edge-exp (_pair)
-                          (cases expression _pair
-                            (lit-list-exp (expressions) (add-edge value (map (lambda (exp) (eval-expression exp env)) expressions)))
-                            (else (eopl:error "Invalid expression"))))
+      (graph-add-edge-exp (edge-e)
+                  (add-edge value (unparse-edge-exp (eval-expression edge-e env))))
+      
+      (graph-add-vertex-exp (vertex)
+                  (add-vertice value (eval-expression vertex env)))
 
       (graph-outgoing-neighbors-exp (vertex) (vecinos-salientes value (eval-expression vertex env)))
       (graph-incoming-neighbors-exp (vertex) (vecinos-entrantes value (eval-expression vertex env)))
@@ -631,7 +660,10 @@
 
 (define list-find-position
   (lambda (sym los)
-    (list-index (lambda (sym1) (eqv? sym1 sym)) los)))
+    ;? Si el sym es un string se usa el string=, si no se usa eqv?
+    (if (string? sym)
+        (list-index (lambda (sym1) (string=? sym1 sym)) los)
+        (list-index (lambda (sym1) (eqv? sym1 sym)) los))))
 
 (define list-index
   (lambda (pred ls)
@@ -696,7 +728,7 @@
                                     (else #f))
                                   (loop
                                    (cdr exps) (cons id var-ids)
-                                   (cons (eval-expression assigned-exp env) var-exps) const-ids
+                                   (cons (eval-identifier assigned-exp env) var-exps) const-ids
                                    const-exps proc-names proc-args proc-bodies
                                    const-proc-names const-proc-args const-proc-bodies)))
               (fusion-const-exp (_type-exp id assigned-exp)
@@ -713,16 +745,10 @@
                                     (loop
                                      (cdr exps) var-ids
                                      var-exps (cons id const-ids)
-                                     (cons (eval-expression assigned-exp env) const-exps)
+                                     (cons (eval-identifier assigned-exp env) const-exps)
                                      proc-names proc-args proc-bodies
                                      const-proc-names const-proc-args const-proc-bodies)))
-              (else
-               (loop
-                (cdr exps) var-ids
-                var-exps const-ids
-                const-exps proc-names
-                proc-args proc-bodies
-                const-proc-names const-proc-args const-proc-bodies))))))))
+              (else (eopl:error "Invalid expression, only variables and constants are allowed"))))))))
 
 ;* is-a-proc?: Verifica si un valor es un procedimiento
 (define is-a-proc?
@@ -779,6 +805,21 @@
                        ))
           (else (eopl:error "Invalid expression"))
           ))))
+
+;* add-vertice: Graph, Symbol -> Graph
+;* Añade un vértice al grafo
+(define add-vertice
+  (lambda (exp vertice)
+    (cases expression exp
+      (graph-exp (vertices-list edges-list)
+        (cases expression vertices-list
+          (vertices-exp (vertices)
+                        (if (vertex-exist? vertice vertices)
+                            (graph-exp vertices-list edges-list)
+                            (graph-exp (vertices-exp (p-append vertices (list vertice))) edges-list)))
+          (else (eopl:error "Invalid expression"))))
+      (else (eopl:error "Invalid expression")))))
+    
 
 ;;* edge-exist? : Edge, List -> Boolean
 ;;* usage: (edge-exist? edge-to-add edges-list) -> Boolean
@@ -889,7 +930,14 @@
     (cond
       [(and (number? (car values)) (number? (cadr values))) (pred-number (car values) (cadr values))]
       [(and (string? (car values)) (string? (cadr values))) (pred-string (car values) (cadr values))]
-      [else (eopl:error "Error to process ~s" values)])))
+      [else (pred-number (car values) (cadr values) )])))
+
+;* unparse-edge-exp
+(define unparse-edge-exp
+  (lambda (_edge)
+    (cases edge _edge
+      (edge-exp (v1 v2) (list v1 v2)))))
+
 
 ;*********************************************************************************
 ;* Construyendo ambiente
@@ -957,10 +1005,16 @@
   (extended-tenv-record
    (syms (list-of symbol?))
    (vals (list-of type?))
+   (tenv type-environment?))
+  (extended-tenv-record-rec
+   (syms (list-of symbol?))
+   (args-types (list-of (list-of type?)))
+   (results-types (list-of type?))
    (tenv type-environment?)))
 
 (define empty-tenv empty-tenv-record)
 (define extend-tenv extended-tenv-record)
+(define extend-tenv-rec extended-tenv-record-rec)
 
 ;* apply-tenv: Aplica un identificador a un ambiente de tipos
 (define apply-tenv
@@ -972,7 +1026,12 @@
                             (let ((pos (list-find-position sym syms)))
                               (if (number? pos)
                                   (list-ref vals pos)
-                                  (apply-tenv env sym)))))))
+                                  (apply-tenv env sym))))
+      (extended-tenv-record-rec (syms args-types results-types env)
+                                (let ((pos (list-find-position sym syms)))
+                                  (if (number? pos)
+                                      (proc-type (list-ref args-types pos) (list-ref results-types pos))
+                                      (apply-tenv env sym)))))))
 
 
 ;*********************************************************************************
@@ -988,7 +1047,7 @@
   (lambda (proc args)
     (cases procval proc
       (closure (ids body env)
-               (eval-expression body (extend-env ids args '() (make-vector 0) env))))))
+               (eval-identifier body (extend-env ids args '() (make-vector 0) env))))))
 
 
 ;*********************************************************************************
@@ -1032,11 +1091,9 @@
 
 (define aux-interpreter
   (lambda (prm)
-    (display (type-of-program prm))
-    (newline)
     (if (type? (type-of-program prm))
         (eval-program prm (empty-env))
-        'error)))
+        "Error de tipos en el programa")))
 
 ;***********************************************************************************
 ;* Definción de tipos
@@ -1065,6 +1122,7 @@
 (define proc-tp (atomic-type 'proc))
 (define vertices-type (atomic-type 'vertices))
 (define edges-type (atomic-type 'edges))
+(define edge-type (atomic-type 'edge))
 (define void-type (atomic-type 'void))
 
 ;***********************************************************************************************************************
@@ -1087,8 +1145,16 @@
                            ;* Llamar a get-ids-and-exps-types para obtener las expresiones variables y constantes
                            ;* luego, extender el ambiente de tipos con las variables y constantes
                            (let*
-                               ((exps (get-ids-and-types expressions)))
-                             (extend-tenv (car exps) (expand-type-expressions (cadr exps)) (empty-tenv)))))))
+                               ((exps (get-ids-and-types expressions (empty-tenv)))
+                                (ids (car exps))
+                                (types (cadr exps))
+                                (ids-proc (caddr exps))
+                                (args-types-proc (cadddr exps))
+                                (results-types (car (cddddr exps))))
+                             (begin
+                               (extend-tenv-rec ids-proc args-types-proc results-types (extend-tenv ids (expand-type-expressions types) (empty-tenv)))
+                               )
+                             )))))
 
 
 ;* type-of-block-program: <bloque-program> -> type
@@ -1158,7 +1224,7 @@
 
       (unary-exp (rator orand)
                  (type-of-application
-                  (type-of-unary-prim rator (list (type-of-expression orand tenv)))
+                  (type-of-unary-prim rator (type-of-expression orand tenv))
                   (list (type-of-expression orand tenv))
                   rator (list orand) exp))
 
@@ -1198,66 +1264,78 @@
                  void-type))
 
       (lit-dict-exp (keys-exp values-exp)
-                    (let*
-                        ((keys-types (map (lambda (exp) (type-of-expression exp tenv)) keys-exp))
-                         (values-types (map (lambda (exp) (type-of-expression exp tenv)) values-exp)))
-                      (let loop ((keys-tys keys-types) (values-tys values-types))
-                        (if (null? keys-tys)
-                            (dict-type void-type void-type)
-                            (if (equal? (length keys-tys) 1)
-                                (dict-type (car keys-types) (car values-types))
-                                (begin
-                                  (check-equal-type! (car keys-types) (cadr keys-types) (car keys-exp))
-                                  (check-equal-type! (car values-types) (cadr values-types) (car values-exp))
-                                  (loop (cdr keys-tys) (cdr values-tys))
-                                  ))))))
+                    (let ((key-types (map (lambda (exp) (type-of-expression exp tenv)) keys-exp))
+                          (value-types (map (lambda (exp) (type-of-expression exp tenv)) values-exp)))
+                      (if (null? key-types)
+                          (dict-type void-type void-type)
+                          (if (equal? (length key-types) 1)
+                              (dict-type (car key-types) (car value-types))
+                              (let ((first-key-type (car key-types))
+                                    (first-value-type (car value-types)))
+                                (let loop ((key-types key-types) (value-types value-types))
+                                  (if (null? key-types)
+                                      (dict-type first-key-type first-value-type)
+                                      (begin
+                                        (check-equal-type! first-key-type (car key-types) exp)
+                                        (check-equal-type! first-value-type (car value-types) exp)
+                                        (loop (cdr key-types) (cdr value-types))))))))))
 
 
       ;! REFACTORIZAR ESTO! EN UNA SOLA FUNCION PARA QUE LO USE VECTORS, LIST Y DICT
       (lit-vector-exp (elems-exp)
-                      ;? Verificar que todos los elementos del vector sean del mismo tipo
                       (let ((elem-types (map (lambda (exp) (type-of-expression exp tenv)) elems-exp)))
-                        (let loop ((elem-types elem-types))
-                          (if (null? elem-types)
-                              (vector-type void-type)
-                              (if (equal? (length elem-types) 1)
-                                  (vector-type (car elem-types))
-                                  (begin
-                                    (check-equal-type! (car elem-types) (cadr elem-types) (car elems-exp))
-                                    (loop (cdr elem-types))))))))
-
+                        (if (null? elem-types)
+                            (vector-type void-type)
+                            (if (equal? (length elem-types) 1)
+                                (vector-type (car elem-types))
+                                (let ((first-type (car elem-types)))
+                                  (let loop ((types elem-types))
+                                    (if (null? types)
+                                        (vector-type first-type)
+                                        (begin
+                                          (check-equal-type! first-type (car types) exp)
+                                          (loop (cdr types))))))))))
       ;! REFACTORIZAR ESTO!
       (lit-list-exp (elems-exp)
-                    ;? Verificar que todos los elementos de la lista sean del mismo tipo
                     (let ((elem-types (map (lambda (exp) (type-of-expression exp tenv)) elems-exp)))
-                      (let loop ((elem-types elem-types))
-                        (if (null? elem-types)
-                            (list-type void-type)
-                            (begin
-                              (check-equal-type! (car elem-types) (cadr elem-types) (car elems-exp))
-                              (loop (cdr elem-types)))))))
+                      (if (null? elem-types)
+                          (list-type void-type)
+                          (if (equal? (length elem-types) 1)
+                              (list-type (car elem-types))
+                              (let ((first-type (car elem-types)))
+                                (let loop ((types elem-types))
+                                  (if (null? types)
+                                      (list-type first-type)
+                                      (begin
+                                        (check-equal-type! first-type (car types) exp)
+                                        (loop (cdr types))))))))))
+
+
+
 
       (vertices-exp (_vertices) vertices-type)
       (edges-exp (_edges) edges-type)
       (graph-exp (_vertices _edges)
-                 (check-equal-type! (type-of-expression _vertices tenv) vertices-type _vertices)
-                 (check-equal-type! (type-of-expression _edges tenv) edges-type _edges)
-                 graph-type)
+                 (let ((vertices-type (type-of-expression _vertices tenv))
+                       (edges-type (type-of-expression _edges tenv)))
+                   (check-equal-type! (type-of-expression _vertices tenv) vertices-type _vertices)
+                   (check-equal-type! (type-of-expression _edges tenv) edges-type _edges)
+                   (graph-type vertices-type edges-type)))
+
       (else 'a)
       )))
 
 (define expand-type-expression
   (lambda (texp)
+    ;? Verificar si es una proc-type, si es así, retornar el tipo proc
+
+
     (cases type-exp texp
       (type-int-exp () int-type)
       (type-float-exp () float-type)
       (type-string-exp () string-type)
       (type-bool-exp () bool-type)
-      (type-proc-exp (arg-texps result-texp)
-                     (proc-type
-                      (expand-type-expressions arg-texps)
-                      (expand-type-expression result-texp)))
-      (type-graph-exp () graph-type)
+      (type-proc-exp (_typ) proc-tp)
       (type-vertices-exp () vertices-type)
       (type-edges-exp () edges-type)
 
@@ -1265,11 +1343,20 @@
       (type-list-exp (texp) (list-type (expand-type-expression texp)))
       (type-vector-exp (texp) (vector-type (expand-type-expression texp)))
       (type-dict-exp (key-exp value-exp) (dict-type (expand-type-expression key-exp) (expand-type-expression value-exp)))
+      (type-graph-exp () (graph-type vertices-type edges-type))
       )))
+
+
+;* expand-type-expressions: Funcion que expande el tipo de las expressiones
+;* Si esta es de tipo type, se deja igual
 
 (define expand-type-expressions
   (lambda (texps)
-    (map expand-type-expression texps)))
+    (map (lambda (texp)
+           (if (type? texp)
+               texp
+               (expand-type-expression texp))) texps)))
+
 
 ;check-equal-type!: <type> <type> <expression> ->
 ; verifica si dos tipos son iguales, muestra un mensaje de error en caso de que no lo sean
@@ -1356,10 +1443,12 @@
       (unary-add-exp ()
                      (cond
                        [(equal? value int-type) (proc-type (list int-type) int-type)]
-                       [(equal? value float-type) (proc-type (list float-type) float-type)]
-                       [else (eopl:error 'type-of-unary-prim "Invalid unary prim: ~s" prim)]))
+                       [else (proc-type (list float-type) float-type)]))
 
-      (unary-sub-exp () (proc-type (list int-type) int-type))
+      (unary-sub-exp ()
+                     (cond
+                       [(equal? value int-type) (proc-type (list int-type) int-type)]
+                       [else (proc-type (list float-type) float-type)]))
       (string-length-exp () (proc-type (list string-type) int-type))
       (dict-bool-exp () (proc-type (list dict-type) bool-type))
       (dict-make-exp () (proc-type (list dict-type) dict-type))
@@ -1380,8 +1469,13 @@
 
       (vector-delete-exp (_pos)
                          (cases type (car value)
-                           (vector-type (_elem-type) 
-                              (proc-type (list (vector-type _elem-type)) (vector-type _elem-type)))
+                           (vector-type (_elem-type)
+                                        (proc-type (list (vector-type _elem-type)) (vector-type _elem-type)))
+                           (else (eopl:error 'type-of-unary-prim "Invalid unary prim: ~s" prim))))
+
+      (vector-length-exp ()
+                         (cases type (car value)
+                           (vector-type (_elem-type) (proc-type (list (vector-type _elem-type)) int-type))
                            (else (eopl:error 'type-of-unary-prim "Invalid unary prim: ~s" prim))))
 
       (list-empty-bool-exp ()
@@ -1398,10 +1492,25 @@
                        (list-type (_elem-type) (proc-type (list (list-type _elem-type)) (list-type _elem-type)))
                        (else (eopl:error 'type-of-unary-prim "Invalid unary prim: ~s" prim))))
 
+      (list-length-exp ()
+                       (cases type (car value)
+                         (list-type (_elem-type) (proc-type (list (list-type _elem-type)) int-type))
+                         (else (eopl:error 'type-of-unary-prim "Invalid unary prim: ~s" prim))))
+
       (list-bool-exp ()
                      (cases type (car value)
                        (list-type (_elem-type) (proc-type (list (list-type _elem-type)) bool-type))
                        (else (eopl:error 'type-of-unary-prim "Invalid unary prim: ~s" prim))))
+      
+      (graph-edges-list-exp ()
+                           (cases type (car value)
+                             (graph-type (_vertices-type _edges-type) (proc-type (list (graph-type _vertices-type _edges-type)) (list-type edge-type)))
+                             (else (eopl:error 'type-of-unary-prim "Invalid unary prim: ~s" prim))))
+
+      (graph-vertices-list-exp ()
+                              (cases type (car value)
+                                (graph-type (_vertices-type _edges-type) (proc-type (list (graph-type _vertices-type _edges-type)) (list-type (cadr value))))
+                                (else (eopl:error 'type-of-unary-prim "Invalid unary prim: ~s" prim))))
 
       (graph-vertices-exp ()
                           (cases type (car value)
@@ -1417,6 +1526,11 @@
                           (cases type (car value)
                             (graph-type (_vertices-type _edges-type) (proc-type (list (graph-type _vertices-type _edges-type) (list-type (list-type (car value) (cadr value)))) (graph-type _vertices-type _edges-type)))
                             (else (eopl:error 'type-of-unary-prim "Invalid unary prim: ~s" prim))))
+      
+      (graph-add-vertex-exp (_vertex)
+                            (cases type (car value)
+                              (graph-type (_vertices-type _edges-type) (proc-type (list (graph-type _vertices-type _edges-type) (car value)) (graph-type _vertices-type _edges-type)))
+                              (else (eopl:error 'type-of-unary-prim "Invalid unary prim: ~s" prim))))
 
       (graph-outgoing-neighbors-exp (_vertex)
                                     (cases type (car value)
@@ -1427,6 +1541,7 @@
                                     (cases type (car value)
                                       (graph-type (_vertices-type _edges-type) (proc-type (list (graph-type _vertices-type _edges-type) (car value)) (list-type (cadr value))))
                                       (else (eopl:error 'type-of-unary-prim "Invalid unary prim: ~s" prim))))
+
 
       )))
 
@@ -1443,9 +1558,8 @@
                          (proc-type (list string-type string-type) string-type)]
                         [(and (equal? (car values) float-type) (equal? (cadr values) int-type))
                          (proc-type (list float-type int-type) float-type)]
-                        [(and (equal? (cadr values) int-type)) (equal? (car values) float-type)
-                                                               (proc-type (list float-type int-type) float-type)]
-                        [else (eopl:error 'type-of-binary-prim "Invalid binary prim: ~s" prim)]))
+                        [(and (equal? (car values) int-type) (equal? (cadr values) float-type))
+                         (proc-type (list float-type int-type) float-type)]))
       (binary-sub-exp ()
                       (cond
                         [(and (equal? (car values) int-type) (equal? (cadr values) int-type))
@@ -1454,8 +1568,8 @@
                          (proc-type (list float-type float-type) float-type)]
                         [(and (equal? (car values) float-type) (equal? (cadr values) int-type))
                          (proc-type (list float-type int-type) float-type)]
-                        [(and (equal? (cadr values) int-type)) (equal? (car values) float-type)
-                                                               (proc-type (list float-type int-type) float-type)]))
+                        [(and (equal? (car values) int-type) (equal? (cadr values) float-type))
+                         (proc-type (list int-type float-type) float-type)]))
 
       (binary-mul-exp ()
                       (cond
@@ -1465,8 +1579,8 @@
                          (proc-type (list float-type float-type) float-type)]
                         [(and (equal? (car values) float-type) (equal? (cadr values) int-type))
                          (proc-type (list float-type int-type) float-type)]
-                        [(and (equal? (cadr values) int-type)) (equal? (car values) float-type)
-                                                               (proc-type (list float-type int-type) float-type)]))
+                        [(and (equal? (car values) int-type) (equal? (cadr values) float-type))
+                         (proc-type (list float-type int-type) float-type)]))
       (binary-mod-exp ()
                       (cond
                         [(and (equal? (car values) int-type) (equal? (cadr values) int-type))
@@ -1475,9 +1589,15 @@
                          (proc-type (list float-type float-type) float-type)]
                         [(and (equal? (car values) float-type) (equal? (cadr values) int-type))
                          (proc-type (list float-type int-type) float-type)]
-                        [(and (equal? (cadr values) int-type)) (equal? (car values) float-type)
-                                                               (proc-type (list float-type int-type) float-type)]))
-      (binary-div-exp () (proc-type (list (car values) (cadr values)) float-type))
+                        [(and (equal? (car values) int-type) (equal? (cadr values) float-type))
+                         (proc-type (list float-type int-type) float-type)]))
+      (binary-div-exp () (proc-type (list (car values) (cadr values))
+                                    (cond
+                                      [(and (equal? (car values) int-type) (equal? (cadr values) int-type)) int-type]
+                                      [(and (equal? (car values) float-type) (equal? (cadr values) float-type)) float-type]
+                                      [(and (equal? (car values) float-type) (equal? (cadr values) int-type)) float-type]
+                                      [(and (equal? (car values) int-type) (equal? (cadr values) float-type)) float-type])
+                                    ))
       (binary-eq-exp ()  (proc-type  (list (car values) (cadr values)) bool-type))
       (binary-neq-exp () (proc-type  (list (car values) (cadr values)) bool-type))
       (binary-lt-exp () (proc-type  (list (car values) (cadr values)) bool-type))
@@ -1530,13 +1650,17 @@
       (else 'bin)
       )))
 
-;type-of-primitive: (list-of <symbol>) (list-of <expression>) <expression> <tenv> -> <type>
-; función auxiliar para determinar el tipo de una expresión let
+;! Este código es muy repetitivo, se puede refactorizar
 (define type-of-block-locals-exp
   (lambda (vars-exps exp-body bodies tenv)
     (let*
-        ((ids-and-exps (get-ids-and-types vars-exps))
-         (new-tenv (extend-tenv (car ids-and-exps) (expand-type-expressions (cadr ids-and-exps)) tenv)))
+        ((rslt (get-ids-and-types vars-exps tenv))
+         (ids (car rslt))
+         (types (cadr rslt))
+         (ids-proc (caddr rslt))
+         (args-types-proc (cadddr rslt))
+         (results-types (car (cddddr rslt)))
+         (new-tenv (extend-tenv-rec ids-proc args-types-proc results-types (extend-tenv ids (expand-type-expressions types) tenv))))
       (type-of-block-exp exp-body bodies new-tenv))))
 
 ;type-of-block-exp
@@ -1553,21 +1677,56 @@
 
 ; get-ids-and-types: <expresión>* -> (list-of (list-of id) (lis-of type))
 ; función que obtiene los identificadores y tipos de la lista de expresiones en listas separadas
+;! Solo acepta fusion-var-exp y fusion-const-exp
+;! Refactoriar para no escribir el código dos veces
 (define get-ids-and-types
-  (lambda (exps)
-    (let loop ((exps exps) (ids '()) (types '()))
+  (lambda (exps tenv)
+    (let loop ((exps exps) (ids '()) (types '()) (ids-proc '()) (args-types-proc '()) (results-types '()) )
       (if (null? exps)
-          (list ids types)
+          (list ids types ids-proc args-types-proc results-types)
           (let ((exp (car exps)))
             (cases expression exp
-              (fusion-var-exp (type-exp id _assigned-exp)
-                              (check-equal-type! (expand-type-expression type-exp) (type-of-expression _assigned-exp (empty-tenv)) exp)
-                              (loop (cdr exps) (cons id ids) (cons type-exp types)))
-              (fusion-const-exp (type-exp id _assigned-exp)
-                                (check-equal-type! (expand-type-expression type-exp) (type-of-expression _assigned-exp (empty-tenv)) exp)
-                                (loop (cdr exps) (cons id ids) (cons type-exp types)))
-              (else
-               (loop (cdr exps) ids types))))))))
+              (fusion-var-exp (_type-exp id _assigned-exp)
+                              (cases expression _assigned-exp
+                                (lit-proc-exp (_types-ids _ids _body)
+                                              (let
+                                                  ((args-result (get-proc-args-result-types _assigned-exp tenv)))
+                                                (cases type-exp _type-exp
+                                                  (type-proc-exp (typ)
+                                                                 (loop (cdr exps) ids types (cons id ids-proc) (cons (car args-result) args-types-proc) (cons (expand-type-expression typ) results-types)))
+                                                  (else
+                                                   (eopl:error 'get-ids-and-types "Not a proc expression: ~s" _assigned-exp)))))
+                                (else
+                                 (begin
+                                   (check-equal-type! (expand-type-expression _type-exp) (type-of-expression _assigned-exp tenv) exp)
+                                   (loop (cdr exps) (cons id ids) (cons _type-exp types) ids-proc args-types-proc results-types)))))
+
+
+              (fusion-const-exp (_type-exp id _assigned-exp)
+                                (cases expression _assigned-exp
+                                  (lit-proc-exp (_types-ids _ids _body)
+                                                (let
+                                                    ((args-result (get-proc-args-result-types _assigned-exp tenv)))
+                                                  (cases type-exp _type-exp
+                                                    (type-proc-exp (typ)
+                                                                   (loop (cdr exps) ids types (cons id ids-proc) (cons (car args-result) args-types-proc) (cons (expand-type-expression typ) results-types)))
+                                                    (else
+                                                     (eopl:error 'get-ids-and-types "Not a proc expression: ~s" _assigned-exp)))))
+                                  (else
+                                   (begin
+                                     (check-equal-type! (expand-type-expression _type-exp) (type-of-expression _assigned-exp tenv) exp)
+                                     (loop (cdr exps) (cons id ids) (cons _type-exp types) ids-proc args-types-proc results-types)))))
+              (else (loop (cdr exps) ids types ids-proc args-types-proc results-types))))))))
+
+; get-proc-args-result-types: recibe una expresión de tipo proc y retorna una lista con los tipos de los argumentos y el tipo de retorno
+(define get-proc-args-result-types
+  (lambda (proc-exp _tenv)
+    (cases expression proc-exp
+      (lit-proc-exp (types-ids _ids _body)
+                    (let ((arg-types (expand-type-expressions types-ids)))
+                      (list arg-types))) ;? Falta retornar el tipo de retorno (Pero no se puede)
+      (else (eopl:error 'get-proc-args-result-types "Not a proc expression: ~s" proc-exp)))))
+
 
 
 (type-interpreter)

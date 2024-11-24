@@ -1,0 +1,133 @@
+GLOBALS {
+	proc -> graph GraphUnion = function (graph G1, graph G2) {
+		return LOCALS {
+			int i = 0;
+			int j = 0;
+			int k = 0;
+			int l = 0;
+			vertices V1 = @vertices-list G1;
+			vertices V2 = @vertices-list G2;
+			edges E1 	= @edges-list G1;
+			edges E2 	= @edges-list G2;
+			graph G3  	= @graph @v[] @e[];
+		} {
+			LOCALS {
+				int lengthE2 = @list-length E2;
+				int lengthE1 = @list-length E1;
+				int lengthV1 = @list-length V1;
+				int lengthV2 = @list-length V2;
+			} {
+				for (-> k 0; < k lengthV2; -> k + k 1) {
+					-> G3 @add-vertex @head V2 G3
+					-> V2 @tail V2
+				};
+			
+				for (-> i 0; < i lengthE2; -> i + i 1) {
+					-> G3 @add-edge @head E2 G3
+					-> E2 @tail E2
+				};
+			
+				for (-> j 0; < j lengthE1; -> j + j 1) {
+					-> G3 @add-edge @head E1 G3 
+					-> E1 @tail E1
+				};
+				
+				for (-> l 0; < l lengthV1; -> l + l 1) {
+					-> G3 @add-vertex @head V1 G3 
+					-> V1 @tail V1
+				};
+			
+				G3;
+			};
+		}
+	};
+	
+	proc -> graph GraphIntercection = function (graph G1, graph G2) {
+		return LOCALS {
+			int i = 0;
+			int j = 0;
+			int k = 0;
+			int l = 0;
+			vertices V1 = @vertices-list G1;
+			vertices V2 = @vertices-list G2;
+			edges E1 	= @edges-list G1;
+			edges E2 	= @edges-list G2;
+			graph G3  	= @graph @v[] @e[];
+		} {
+			LOCALS {
+				int lengthE2 = @list-length E2;
+				int lengthE1 = @list-length E1;
+				int lengthV1 = @list-length V1;
+				int lengthV2 = @list-length V2;
+			} {
+       			while (!@empty? V1) {
+       				LOCALS {
+       					string v = @head V1;
+       					vertices tempV2 = V2;
+       					bool isEqual = False;
+       				} {
+       					while (! @empty? tempV2) {
+       						if (== v @head tempV2) {
+       							BLOCK {
+       								-> G3 @add-vertex @head V1 G3;
+       								-> isEqual True;
+       								-> tempV2 @tail tempV2;
+       							} 
+       						} else {
+	       							-> tempV2 @tail tempV2
+       						}
+       					};
+       					
+       					if (== False isEqual) {
+       						-> V1 @tail V1
+       					} else {
+       						-> V1 @tail V1
+       					};
+       				}
+       			};
+
+						while (!@empty? E1) {
+       				LOCALS {
+       					vertices tempE2 = E2;
+       					bool isEqual = False;
+       				} {
+       					while (! @empty? tempE2) {
+       						if (== @head E1 @head tempE2) {
+       							BLOCK {
+       								-> G3 @add-edge @head E1 G3;
+       								-> isEqual True;
+       								-> tempE2 @tail tempE2;
+       							} 
+       						} else {
+	       							-> tempE2 @tail tempE2
+       						}
+       					};
+       					
+       					if (== False isEqual) {
+       						-> E1 @tail E1
+       					} else {
+       						-> E1 @tail E1
+       					};
+       				}
+       			};
+ 
+		        G3;
+      		};
+		}
+	};
+}
+PROGRAM {
+	proc -> any main = function() {
+		return LOCALS {
+			graph G1 = @graph @v[a,b,c,d] @e[(a => b), (c => d), (c => b), (a => c)];
+			graph G2 = @graph @v[x,b,a,y,z,w] @e[(a => y), (z => w), (z => y), (a => z)];
+
+			graph G3 = @graph @v[a, b, c, d] @e[(a => b), (c => d), (c => b), (a => c)];
+			graph G4 = @graph @v[b, c, e, f] @e[(b => c), (e => f), (c => b)];
+
+		} {
+			print(@GraphUnion(G1, G2));
+			print(@GraphIntercection(G3, G4));
+		}
+	}
+}
